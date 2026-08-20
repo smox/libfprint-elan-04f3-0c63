@@ -1,0 +1,245 @@
+From e71c370ac5acf86c18e153a09187dde01aa59d16 Mon Sep 17 00:00:00 2001
+From: Michael Brunner <michael.brunner@sm0x.org>
+Date: Thu, 20 Aug 2026 13:18:47 +0200
+Subject: [PATCH 3/3] print: reject NBIS samples below the matcher minimum
+
+fpi_print_add_from_image() accepts any non-empty minutiae list.  Bozorth
+however returns ZERO_MATCH_SCORE as soon as either side holds fewer than
+MIN_COMPUTABLE_BOZORTH_MINUTIAE entries, currently ten:
+
+    bozorth3.c:642  if (pstruct->nrows < MIN_COMPUTABLE_BOZORTH_MINUTIAE)
+    bozorth3.c:663  if (gstruct->nrows < MIN_COMPUTABLE_BOZORTH_MINUTIAE)
+
+Enrolment can therefore complete successfully while storing a print that
+is mathematically unable to ever match.  The user sees "enroll-completed"
+and every later verification fails with no-match, which looks like a
+recognition problem rather than a rejected sample.
+
+This was reproduced on an ELAN 04f3:0c63.  A controlled enrolment stored
+five stages holding 6, 7, 8, 3 and 6 XYT rows.  All ten pairwise
+comparisons within that gallery, and every comparison against later
+probes, scored zero - including probes with 14 and 17 minutiae, because
+the gallery side alone already falls below the minimum.
+
+Enforce the matcher's own precondition before the sample enters a
+gallery.  The minimum is derived from the existing NBIS constant rather
+than duplicated, so it stays correct if NBIS changes.  The error uses the
+FP_DEVICE_RETRY domain, so image devices keep the session alive and ask
+for the same stage again instead of aborting: fpi_image_device_* only
+advances the stage counter when a print was actually returned.
+
+The same guard makes an undersized verification probe report a retryable
+scan error rather than a misleading final no-match.
+
+Capture, non-NBIS devices and all matching thresholds are unaffected.
+
+Tests cover 0, 1, MIN-1 and MIN minutiae and assert that a rejected
+sample leaves both the print gallery and the retained image untouched.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+---
+ libfprint/fpi-print.c  |  21 +++++--
+ tests/meson.build      |   1 +
+ tests/test-fpi-print.c | 133 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 149 insertions(+), 6 deletions(-)
+ create mode 100644 tests/test-fpi-print.c
+
+diff --git a/libfprint/fpi-print.c b/libfprint/fpi-print.c
+index 6c5e20d..3416c33 100644
+--- a/libfprint/fpi-print.c
++++ b/libfprint/fpi-print.c
+@@ -173,6 +173,7 @@ fpi_print_add_from_image (FpPrint *print,
+                           GError **error)
+ {
+   GPtrArray *minutiae;
++  guint minutiae_count;
+   struct fp_minutiae _minutiae;
+   struct xyt_struct *xyt;
+ 
+@@ -186,18 +187,26 @@ fpi_print_add_from_image (FpPrint *print,
+     }
+ 
+   minutiae = fp_image_get_minutiae (image);
+-  if (!minutiae || minutiae->len == 0)
++  minutiae_count = minutiae ? minutiae->len : 0;
++
++  /* Bozorth cannot produce a score unless both sides carry at least
++   * MIN_COMPUTABLE_BOZORTH_MINUTIAE entries.  Accepting anything below that
++   * during enrolment stores a print that can only ever match with score
++   * zero, so reject it as a retryable scan error instead. */
++  if (minutiae_count < MIN_COMPUTABLE_BOZORTH_MINUTIAE)
+     {
+       g_set_error (error,
+-                   G_IO_ERROR,
+-                   G_IO_ERROR_INVALID_DATA,
+-                   "No minutiae found in image or not yet detected!");
++                   FP_DEVICE_RETRY,
++                   FP_DEVICE_RETRY_GENERAL,
++                   "Only %u minutiae found, at least %u are required to match",
++                   minutiae_count,
++                   (guint) MIN_COMPUTABLE_BOZORTH_MINUTIAE);
+       return FALSE;
+     }
+ 
+-  _minutiae.num = minutiae->len;
++  _minutiae.num = minutiae_count;
+   _minutiae.list = (struct fp_minutia **) minutiae->pdata;
+-  _minutiae.alloc = minutiae->len;
++  _minutiae.alloc = minutiae_count;
+ 
+   xyt = g_new0 (struct xyt_struct, 1);
+   minutiae_to_xyt (&_minutiae, image->width, image->height, xyt);
+diff --git a/tests/meson.build b/tests/meson.build
+index aad0675..f360668 100644
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -312,6 +312,7 @@ unit_tests = [
+     'fpi-device',
+     'fpi-ssm',
+     'fpi-assembling',
++    'fpi-print',
+ ]
+ 
+ if 'virtual_image' in drivers
+diff --git a/tests/test-fpi-print.c b/tests/test-fpi-print.c
+new file mode 100644
+index 0000000..7315844
+--- /dev/null
++++ b/tests/test-fpi-print.c
+@@ -0,0 +1,133 @@
++/*
++ * Unit tests for the private NBIS print handling
++ * Copyright (C) 2026 libfprint contributors
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++#include <glib.h>
++
++#include "fp-print-private.h"
++#include "fpi-device.h"
++#include "fpi-image.h"
++#include "fpi-minutiae.h"
++#include "fpi-print.h"
++
++typedef struct
++{
++  guint    minutiae_count;
++  gboolean accepted;
++} AddFromImageCase;
++
++/* The interesting values are the ones around
++ * MIN_COMPUTABLE_BOZORTH_MINUTIAE: nothing at all, a single minutia, one
++ * below the minimum, and exactly the minimum. */
++static const AddFromImageCase add_from_image_cases[] = {
++  { 0, FALSE },
++  { 1, FALSE },
++  { MIN_COMPUTABLE_BOZORTH_MINUTIAE - 1, FALSE },
++  { MIN_COMPUTABLE_BOZORTH_MINUTIAE, TRUE },
++};
++
++static FpImage *
++make_image_with_minutiae (guint minutiae_count)
++{
++  FpImage *image;
++  guint i;
++
++  image = fp_image_new (128, 128);
++  image->minutiae = g_ptr_array_new_with_free_func ((GDestroyNotify) free_minutia);
++
++  for (i = 0; i < minutiae_count; i++)
++    {
++      struct fp_minutia *minutia = g_new0 (struct fp_minutia, 1);
++
++      minutia->x = 10 + i * 3;
++      minutia->y = 20 + i * 4;
++      minutia->direction = i % 16;
++      minutia->reliability = 0.95;
++      g_ptr_array_add (image->minutiae, minutia);
++    }
++
++  return image;
++}
++
++static FpPrint *
++make_nbis_print (void)
++{
++  FpPrint *print;
++
++  print = g_object_new (FP_TYPE_PRINT,
++                        "driver", "unit-test",
++                        "device-id", "unit-test-device",
++                        NULL);
++  fpi_print_set_type (print, FPI_PRINT_NBIS);
++
++  return g_object_ref_sink (print);
++}
++
++static void
++test_add_from_image_minimum (gconstpointer user_data)
++{
++  const AddFromImageCase *test_case = user_data;
++
++  g_autoptr(FpImage) image = NULL;
++  g_autoptr(FpPrint) print = NULL;
++  g_autoptr(GError) error = NULL;
++  gboolean accepted;
++
++  image = make_image_with_minutiae (test_case->minutiae_count);
++  print = make_nbis_print ();
++  accepted = fpi_print_add_from_image (print, image, &error);
++
++  g_assert_cmpint (accepted, ==, test_case->accepted);
++
++  if (!test_case->accepted)
++    {
++      /* A retryable error keeps the enrolment session alive, so the caller
++       * asks for the same stage again instead of storing a print that can
++       * never match. */
++      g_assert_error (error, FP_DEVICE_RETRY, FP_DEVICE_RETRY_GENERAL);
++      g_assert_cmpuint (print->prints->len, ==, 0);
++      g_assert_null (fp_print_get_image (print));
++      return;
++    }
++
++  g_assert_no_error (error);
++  g_assert_cmpuint (print->prints->len, ==, 1);
++  g_assert_cmpint (((struct xyt_struct *) print->prints->pdata[0])->nrows,
++                   ==, test_case->minutiae_count);
++  g_assert_true (fp_print_get_image (print) == image);
++}
++
++int
++main (int argc, char *argv[])
++{
++  guint i;
++
++  g_test_init (&argc, &argv, NULL);
++
++  for (i = 0; i < G_N_ELEMENTS (add_from_image_cases); i++)
++    {
++      g_autofree gchar *test_name = NULL;
++
++      test_name = g_strdup_printf ("/fpi-print/add-from-image/%u-minutiae",
++                                   add_from_image_cases[i].minutiae_count);
++      g_test_add_data_func (test_name, &add_from_image_cases[i],
++                            test_add_from_image_minimum);
++    }
++
++  return g_test_run ();
++}
+-- 
+2.55.0
+

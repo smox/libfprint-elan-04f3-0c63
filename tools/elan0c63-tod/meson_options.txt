@@ -1,0 +1,2 @@
+option('build_verifier', type: 'boolean', value: false,
+       description: 'Build the offline verification tool (needs an exported corpus)')

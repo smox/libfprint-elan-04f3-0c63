@@ -1,0 +1,46 @@
+# Biometrische Daten dürfen dieses Verzeichnis niemals als Repository verlassen.
+# Der Rohdatenkorpus liegt bewusst außerhalb des Projekts unter
+# /var/lib/fprint-research/ (root-exklusiv, 0700).
+# Diese Regeln sind eine zusätzliche Absicherung, falls hier später ein
+# Repository angelegt wird.
+
+# Rohaufnahmen, Frames, Templates
+*.raw
+*.frame
+*.frames
+*.pgm
+*.pnm
+*.xyt
+*.tmpl
+*.template
+fprint-corpus/
+raw-captures/
+test-root/
+
+# Journale können Gerätedetails enthalten
+*.log
+
+# Gebaute Artefakte
+build-rpms/
+build-rpms-openssl/
+*.rpm
+
+# Python-Arbeitsumgebung der Forschungswerkzeuge
+tools/.venv/
+__pycache__/
+*.pyc
+
+# Upstream-Quelltarballs: fünf identische Kopien à 9,3 MB, bei freedesktop
+# herunterladbar. Die Prüfsummen stehen in den CHECKSUMS.sha256 der Buildordner.
+*.tar.bz2
+*.tar.gz
+
+# Bauartefakte
+tools/elan0c63-tod/build/
+tools/elan0c63-tod/rpm/
+*.o
+*.so
+
+# osc-Arbeitsverzeichnisse
+.osc/
+test-root/

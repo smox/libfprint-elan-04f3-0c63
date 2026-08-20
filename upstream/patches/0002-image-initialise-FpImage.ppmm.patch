@@ -1,0 +1,86 @@
+From a9e176c2baeb0ed00b2d08491e351dba33a8318f Mon Sep 17 00:00:00 2001
+From: Michael Brunner <michael.brunner@sm0x.org>
+Date: Thu, 20 Aug 2026 13:12:52 +0200
+Subject: [PATCH 2/3] image: initialise FpImage.ppmm
+
+FpImage.ppmm is documented as the image resolution and is handed to
+get_minutiae(), but nothing ever assigns it.  FpImage has only "width"
+and "height" properties and fp_image_init() is empty, so the field is
+always the zero left by GObject's allocation.
+
+Inside NBIS the value reaches combined_minutia_quality(), which derives
+the neighbourhood radius from it:
+
+    radius_pix = sround(RADIUS_MM * ppmm);
+
+With ppmm zero the radius is zero, so grayscale_reliability() computes
+the mean and standard deviation of an empty neighbourhood for every
+minutia.  The resulting reliability is meaningless.
+
+Today that is invisible: minutiae_to_xyt() stores the reliability in
+c[i].col[3] and then copies only col[0..2] into the xyt structure, so it
+never reaches Bozorth.  The XXX comment right above that function
+suggests selecting the highest quality minutiae instead of the first
+MAX_BOZORTH_MINUTIAE - an improvement that would silently build on
+garbage while ppmm stays zero.
+
+Initialise it to the 500 dpi the NBIS parameters are tuned for and that
+the existing documentation already assumed, and note that drivers may
+override it.  No matching behaviour changes.
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>
+---
+ libfprint/fp-image.c  | 12 ++++++++++--
+ libfprint/fpi-image.h |  3 ++-
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/libfprint/fp-image.c b/libfprint/fp-image.c
+index f9c60b3..be8d69e 100644
+--- a/libfprint/fp-image.c
++++ b/libfprint/fp-image.c
+@@ -153,9 +153,16 @@ fp_image_class_init (FpImageClass *klass)
+   g_object_class_install_properties (object_class, N_PROPS, properties);
+ }
+ 
++/* NBIS derives pixel distances from the scan resolution.  Drivers that know
++ * their sensor's real resolution should override FpImage.ppmm; everything
++ * else is assumed to be the 500 dpi that the NBIS parameters are tuned for.
++ */
++#define FP_IMAGE_DEFAULT_PPMM (500.0 / 25.4)
++
+ static void
+ fp_image_init (FpImage *self)
+ {
++  self->ppmm = FP_IMAGE_DEFAULT_PPMM;
+ }
+ 
+ typedef struct
+@@ -382,8 +389,9 @@ fp_image_get_width (FpImage *self)
+  * fp_image_get_ppmm:
+  * @self: A #FpImage
+  *
+- * Gets the resolution of the image. Note that this is assumed to
+- * be fixed to 500 points per inch (~19.685 p/mm) for most drivers.
++ * Gets the resolution of the image. This defaults to 500 points per inch
++ * (~19.685 p/mm), which is the resolution the NBIS parameters are tuned
++ * for; drivers may override it for sensors with a known resolution.
+  *
+  * Returns: the resolution of the image in points per millimeter
+  */
+diff --git a/libfprint/fpi-image.h b/libfprint/fpi-image.h
+index fdc376c..46ab4c0 100644
+--- a/libfprint/fpi-image.h
++++ b/libfprint/fpi-image.h
+@@ -45,7 +45,8 @@ typedef enum {
+  * FpImage:
+  * @width: Width of the image
+  * @height: Height of the image
+- * @ppmm: Pixels per millimeter
++ * @ppmm: Pixels per millimeter of the sensor. Defaults to 500 dpi;
++ *   drivers should set this when the real resolution is known.
+  * @flags: #FpiImageFlags for required normalization
+  *
+  * Structure holding an image. The public fields are only public for internal
+-- 
+2.55.0
+
