@@ -1,46 +1,49 @@
 #!/usr/bin/bash
 #
-# Startet einen temporären fprintd, der den lokalen 0c63-Treiber lädt.
+# Starts a temporary fprintd that loads the local 0c63 driver.
 #
-# Es wird nichts installiert und keine Systemdatei ersetzt. Der Treiber wird
-# über zwei Umgebungsvariablen eingebunden, die libfprint selbst vorsieht:
+# Nothing is installed and no system file is replaced. The driver is loaded
+# through two environment variables libfprint provides for this purpose:
 #
-#   FP_TOD_DRIVERS_DIR   Verzeichnis, aus dem zusätzliche Treiber geladen werden
-#   FP_DRIVERS_ALLOWLIST schaltet alle anderen Treiber ab, damit nicht der
-#                        eingebaute elan-Treiber dasselbe Gerät beansprucht
+#   FP_TOD_DRIVERS_DIR   directory to load additional drivers from
+#   FP_DRIVERS_ALLOWLIST disables every other driver, so the in-tree elan
+#                        driver cannot claim the same device
 #
-# Nach dem Stoppen übernimmt wieder das offizielle fprintd.
+# After stopping, the distribution's fprintd takes over again.
 
 set -Eeuo pipefail
 
 readonly TEST_UNIT="fprintd-elan0c63-tod"
-readonly DRIVER_DIR="/home/michael/rootserver/tools/elan0c63-tod/build"
+
+# Derived from this script's own location, so the repository can live anywhere.
+readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly DRIVER_DIR="${REPO_ROOT}/tools/elan0c63-tod/build"
 readonly DRIVER="${DRIVER_DIR}/libfprint-tod-elan0c63.so"
 readonly ENTRY_SYMBOL="fpi_tod_shared_driver_get_type"
 
 if (( EUID != 0 )); then
-  echo "Bitte einmalig als root starten:"
+  echo "Run this once as root:"
   echo "  sudo $0"
   exit 77
 fi
 
 if [[ ! -r "${DRIVER}" ]]; then
-  echo "Fehler: Der Treiber fehlt: ${DRIVER}" >&2
-  echo "Zuerst bauen: tools/elan0c63-tod/build.sh" >&2
+  echo "Error: driver not found: ${DRIVER}" >&2
+  echo "Build it first: tools/elan0c63-tod/build.sh" >&2
   exit 1
 fi
 
 if ! nm -D --defined-only "${DRIVER}" 2>/dev/null | grep -q "${ENTRY_SYMBOL}"; then
-  echo "Fehler: ${DRIVER} exportiert den TOD-Einstiegspunkt nicht." >&2
+  echo "Error: ${DRIVER} does not export the TOD entry point." >&2
   exit 1
 fi
 
-echo "Stoppe gegebenenfalls laufende fprintd-Dienste ..."
+echo "Stopping any running fprintd services ..."
 systemctl stop fprintd.service 2>/dev/null || true
 systemctl stop "${TEST_UNIT}.service" 2>/dev/null || true
 systemctl reset-failed "${TEST_UNIT}.service" 2>/dev/null || true
 
-echo "Starte temporären fprintd mit lokalem 0c63-Treiber ..."
+echo "Starting temporary fprintd with the local 0c63 driver ..."
 systemd-run \
   --unit="${TEST_UNIT}" \
   --description="Temporary fprintd with local ELAN 0c63 descriptor driver" \
@@ -70,24 +73,23 @@ systemd-run \
 readonly TEST_PID="$(systemctl show --property=MainPID --value "${TEST_UNIT}.service")"
 
 if [[ -z "${TEST_PID}" || "${TEST_PID}" == "0" ]]; then
-  echo "Fehler: Der temporäre fprintd besitzt keine laufende Haupt-PID." >&2
+  echo "Error: the temporary fprintd has no running main PID." >&2
   exit 1
 fi
 
-# Belegen, dass wirklich unser Modul geladen wurde und nicht der eingebaute
-# Treiber eingesprungen ist.
+# Confirm our module really was loaded and the in-tree driver did not step in.
 sleep 1
 if ! grep -qF -- "${DRIVER}" "/proc/${TEST_PID}/maps" 2>/dev/null; then
-  echo "Warnung: Der lokale Treiber ist noch nicht in /proc/${TEST_PID}/maps." >&2
-  echo "Module werden erst bei der ersten Geräteabfrage geladen; das ist" >&2
-  echo "normal. Nach dem ersten fprintd-Aufruf erneut prüfen mit:" >&2
+  echo "Note: the local driver is not in /proc/${TEST_PID}/maps yet." >&2
+  echo "Modules load on the first device query, which is expected. Check" >&2
+  echo "again after the first fprintd call with:" >&2
   echo "  sudo grep elan0c63 /proc/${TEST_PID}/maps" >&2
 fi
 
 echo
-echo "Temporärer Dienst läuft als PID ${TEST_PID}."
-echo "Treiberverzeichnis: ${DRIVER_DIR}"
-echo "Zugelassene Treiber: elan0c63 (der eingebaute elan-Treiber ist abgeschaltet)"
-echo "Es wurde nichts installiert und keine Aufnahme gestartet."
+echo "Temporary service running as PID ${TEST_PID}."
+echo "Driver directory: ${DRIVER_DIR}"
+echo "Allowed drivers: elan0c63 (the in-tree elan driver is disabled)"
+echo "Nothing was installed and no capture was started."
 
 exit 0

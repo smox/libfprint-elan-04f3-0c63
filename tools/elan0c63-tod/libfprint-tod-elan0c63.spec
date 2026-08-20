@@ -1,8 +1,8 @@
 #
-# Spec für den ELAN-04f3:0c63-Treiber mit deskriptorbasiertem Vergleich.
+# Spec for the ELAN 04f3:0c63 driver with descriptor-based matching.
 #
-# Das Paket installiert ein einzelnes TOD-Modul. Es ersetzt keine
-# Systembibliothek und verändert keine bestehende Konfiguration.
+# The package installs a single TOD module. It replaces no system library and
+# changes no existing configuration.
 #
 
 Name:           libfprint-tod-elan0c63
@@ -26,12 +26,12 @@ BuildRequires:  glib2-devel
 Requires:       libfprint-2-tod1
 Requires:       fprintd
 
-# Das Modul wird von libfprint per dlopen geladen; RPM sieht die
-# Bibliotheksabhängigkeiten daher korrekt über die ELF-Einträge.
+# libfprint dlopen()s the module, so rpm picks up the library dependencies
+# correctly from the ELF entries.
 
-# Nicht per pkg-config ermitteln: %global wird beim Parsen ausgewertet, also
-# bevor die BuildRequires installiert sind. Der Pfad ist Teil der TOD-ABI und
-# wird im %check gegen pkg-config geprueft, wo das Werkzeug dann existiert.
+# Do not derive this with pkg-config: %global is expanded while parsing, before
+# BuildRequires are installed. The path is part of the TOD ABI and is verified
+# against pkg-config in %check, where the tool does exist.
 %global tod_driversdir %{_libdir}/libfprint-2/tod-1
 
 %description
@@ -81,8 +81,8 @@ g++ %{optflags} -std=c++17 -fPIC -c elan0c63-match.cpp -o match.o \
 gcc %{optflags} -std=gnu11 -fPIC -c elan0c63-tod.c -o tod.o \
     -I. ${TOD_CFLAGS}
 
-# Nur die tatsächlich benutzten OpenCV-Module. Das pkg-config-Paket opencv4
-# zöge sonst dnn, videoio und videostab mit herein.
+# Only the OpenCV modules actually used; the opencv4 pkg-config module would
+# otherwise drag in dnn, videoio and videostab.
 g++ -shared -Wl,-z,relro,-z,now -o libfprint-tod-elan0c63.so tod.o match.o \
     $(pkg-config --libs libfprint-2-tod-1 libfprint-2) \
     -lopencv_core -lopencv_imgproc -lopencv_features2d \
@@ -93,17 +93,17 @@ install -D -m 0755 libfprint-tod-elan0c63.so \
     %{buildroot}%{tod_driversdir}/libfprint-tod-elan0c63.so
 
 %check
-# Ohne den Einstiegspunkt lädt libfprint das Modul nicht - das fällt sonst erst
-# beim Benutzer auf.
+# Without the entry point libfprint will not load the module, which would
+# otherwise only surface on the user's machine.
 nm -D --defined-only libfprint-tod-elan0c63.so | grep -q fpi_tod_shared_driver_get_type
 
-# Gegenprobe, dass der fest eingetragene Pfad dem entspricht, was libfprint
-# tatsaechlich erwartet. Hier ist pkg-config verfuegbar.
+# Cross-check that the hard-coded path matches what libfprint actually expects.
+# pkg-config is available at this point.
 test "$(pkg-config --variable=tod_driversdir libfprint-2-tod-1)" = "%{tod_driversdir}"
 
 %post
-# fprintd wird über D-Bus aktiviert; ein Stopp genügt, damit der nächste
-# Zugriff den neuen Treiber lädt.
+# fprintd is D-Bus activated; stopping it is enough for the next access to pick
+# up the new driver.
 systemctl stop fprintd.service >/dev/null 2>&1 || :
 
 %postun

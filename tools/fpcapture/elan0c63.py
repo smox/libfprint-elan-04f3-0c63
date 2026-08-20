@@ -1,18 +1,17 @@
-"""Direkter USB-Zugriff auf den ELAN 04f3:0c63.
+"""Direct USB access to the ELAN 04f3:0c63.
 
-Dieses Modul spricht das Sensorprotokoll unmittelbar über libusb an, ohne
-libfprint. Das ist Absicht: Für die Forschungsarbeit brauchen wir die
-unveraenderten Rohframes, bevor libfprint sie beschneidet, normalisiert und zu
-einem kuenstlichen Swipe montiert.
+This module speaks the sensor protocol over libusb, without libfprint. That is
+deliberate: the analysis needs the unaltered raw frames, before libfprint crops,
+normalises and stitches them into a synthetic swipe.
 
-Das Protokoll wurde aus dem quelloffenen libfprint-Treiber uebernommen
-(libfprint/drivers/elan.c und elan.h, Version 1.94.10+tod1, LGPL-2.1+).
+The protocol is taken from the open-source libfprint driver
+(libfprint/drivers/elan.c and elan.h, version 1.94.10+tod1, LGPL-2.1+).
 
-Wichtige Abweichungen zum libfprint-Pfad, alle bewusst:
+Three deliberate departures from the libfprint path:
 
-* Es wird nichts auf 50 Zeilen beschnitten. Wir behalten alle 80 Zeilen.
-* Es findet keine Frame-Montage statt. Jeder Frame bleibt ein eigener Frame.
-* Es findet keine Normalisierung statt. Wir speichern die rohen 14-Bit-Werte.
+* Nothing is cropped to 50 rows. All 80 rows are kept.
+* No frame assembly. Every frame stays its own frame.
+* No normalisation. The raw 14-bit values are stored.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ EP_CMD_OUT = 0x01
 EP_CMD_IN = 0x83
 EP_IMG_IN = 0x82
 
-# Kommandos aus elan.h. Jedes ist genau zwei Byte lang.
+# Commands from elan.h. Each is exactly two bytes.
 CMD_GET_SENSOR_DIM = b"\x00\x0c"
 CMD_GET_FW_VER = b"\x40\x19"
 CMD_GET_IMAGE = b"\x00\x09"
@@ -42,7 +41,7 @@ CMD_LED_ON = b"\x40\x31"
 CMD_PRE_SCAN = b"\x40\x3f"
 CMD_STOP = b"\x00\x0b"
 
-# Aus elan.h uebernommen.
+# Taken from elan.h.
 CALIBRATION_MAX_DELTA = 500
 CMD_TIMEOUT_MS = 10_000
 
@@ -51,16 +50,16 @@ NOT_CALIBRATED = 0xFF
 
 
 class ElanError(RuntimeError):
-    """Fehler im Sensorprotokoll."""
+    """An error in the sensor protocol."""
 
 
 class CalibrationError(ElanError):
-    """Die Kalibrierung konnte nicht abgeschlossen werden."""
+    """Calibration could not be completed."""
 
 
 @dataclass(frozen=True)
 class SensorInfo:
-    """Was der Sensor ueber sich selbst meldet."""
+    """What the sensor reports about itself."""
 
     firmware: int
     width: int
@@ -73,15 +72,15 @@ class SensorInfo:
     def __str__(self) -> str:
         return (
             f"ELAN {VENDOR_ID:04x}:{PRODUCT_ID:04x}, "
-            f"Firmware 0x{self.firmware:04x}, {self.width}x{self.height} Pixel"
+            f"firmware 0x{self.firmware:04x}, {self.width}x{self.height} px"
         )
 
 
 class Elan0c63:
-    """Sitzung mit dem Sensor.
+    """A session with the sensor.
 
-    Als Kontextmanager verwenden, damit die LED und der Wartezustand am Ende
-    zuverlaessig abgeschaltet werden::
+    Use as a context manager so the LED and the wait state are reliably turned
+    off at the end::
 
         with Elan0c63() as sensor:
             sensor.calibrate()
@@ -92,7 +91,7 @@ class Elan0c63:
         self._dev = usb.core.find(idVendor=VENDOR_ID, idProduct=PRODUCT_ID)
         if self._dev is None:
             raise ElanError(
-                f"Sensor {VENDOR_ID:04x}:{PRODUCT_ID:04x} nicht gefunden."
+                f"Sensor {VENDOR_ID:04x}:{PRODUCT_ID:04x} not found."
             )
 
         self._detached = False
@@ -101,21 +100,21 @@ class Elan0c63:
                 self._dev.detach_kernel_driver(0)
                 self._detached = True
         except (usb.core.USBError, NotImplementedError):
-            # Auf diesem Geraet beansprucht kein Kernelmodul die Schnittstelle.
+            # No kernel module claims the interface on this device.
             pass
 
         try:
             self._dev.set_configuration()
         except usb.core.USBError as exc:
             raise ElanError(
-                "Sensor laesst sich nicht konfigurieren. Laeuft parallel ein "
-                "fprintd? Fehlen Rechte auf /dev/bus/usb/? Original: " + str(exc)
+                "Cannot configure the sensor. Is an fprintd running? Are the "
+                "permissions on /dev/bus/usb/ missing? Original: " + str(exc)
             ) from exc
 
         self.info = self._activate()
         self.background: np.ndarray | None = None
 
-    # -- Verbindungsverwaltung ------------------------------------------------
+    # -- connection handling --------------------------------------------------
 
     def __enter__(self) -> "Elan0c63":
         return self
@@ -124,7 +123,7 @@ class Elan0c63:
         self.close()
 
     def close(self) -> None:
-        """LED aus, Wartezustand beenden, Geraet freigeben."""
+        """LED off, leave the wait state, release the device."""
         try:
             self._write(CMD_STOP)
         except usb.core.USBError:
@@ -136,7 +135,7 @@ class Elan0c63:
             except (usb.core.USBError, NotImplementedError):
                 pass
 
-    # -- Protokollgrundlagen --------------------------------------------------
+    # -- protocol basics ------------------------------------------------------
 
     def _write(self, cmd: bytes) -> None:
         self._dev.write(EP_CMD_OUT, cmd, timeout=CMD_TIMEOUT_MS)
@@ -156,62 +155,62 @@ class Elan0c63:
             return b""
         return self._read(endpoint, response_len, timeout_ms)
 
-    # -- Aktivierung ----------------------------------------------------------
+    # -- activation -----------------------------------------------------------
 
     def _activate(self) -> SensorInfo:
         firmware_raw = self._command(CMD_GET_FW_VER, 2)
         firmware = (firmware_raw[0] << 8) | firmware_raw[1]
 
         dim = self._command(CMD_GET_SENSOR_DIM, 4)
-        # Der 0c63 gehoert zu den gedrehten Sensoren: Breite steht in Byte 2,
-        # Hoehe in Byte 0 (siehe elan.c, ACTIVATE_SET_SENSOR_DIM).
+        # The 0c63 is one of the rotated sensors: width in byte 2, height in
+        # byte 0 (see elan.c, ACTIVATE_SET_SENSOR_DIM).
         width, height = dim[2], dim[0]
 
-        # Manche Sensoren melden einen Null-basierten Index statt der Anzahl.
+        # Some sensors report a zero-based index instead of a count.
         if width % 2 == 1 and height % 2 == 1:
             width += 1
             height += 1
 
         return SensorInfo(firmware=firmware, width=width, height=height)
 
-    # -- Bildaufnahme ---------------------------------------------------------
+    # -- image capture --------------------------------------------------------
 
     def _read_raw_frame(self, timeout_ms: int = CMD_TIMEOUT_MS) -> np.ndarray:
-        """Einen vollstaendigen Rohframe lesen.
+        """Read one complete raw frame.
 
-        Rueckgabe ist ein ``uint16``-Array der Form ``(height, width)`` mit den
-        unveraenderten 14-Bit-ADC-Werten. Es wird nichts beschnitten und nichts
-        normalisiert.
+        Returns a ``uint16`` array of shape ``(height, width)`` holding the
+        unaltered 14-bit ADC values. Nothing is cropped and nothing is
+        normalised.
         """
         self._write(CMD_GET_IMAGE)
         payload = self._read(EP_IMG_IN, self.info.raw_frame_bytes, timeout_ms)
 
         if len(payload) != self.info.raw_frame_bytes:
             raise ElanError(
-                f"Unvollstaendiger Frame: {len(payload)} statt "
-                f"{self.info.raw_frame_bytes} Byte."
+                f"Incomplete frame: {len(payload)} instead of "
+                f"{self.info.raw_frame_bytes} bytes."
             )
 
         flat = np.frombuffer(payload, dtype="<u2")
-        # Der Sensor liefert die Daten spaltenweise ("the frame is vertical",
-        # elan.c). Wir drehen sie hier einmal in die uebliche Zeilenordnung.
+        # The sensor sends the data column-major ("the frame is vertical" in
+        # elan.c). Rotate it once into the usual row order.
         return flat.reshape(self.info.width, self.info.height).T.copy()
 
     def capture_background(self) -> np.ndarray:
-        """Hintergrundbild ohne Finger aufnehmen und merken."""
+        """Capture and remember the empty-sensor background."""
         self.background = self._read_raw_frame()
         return self.background
 
     def calibration_mean(self) -> int:
-        """Den vom Sensor gemeldeten Kalibrierungsmittelwert lesen."""
+        """Read the calibration mean the sensor reports."""
         raw = self._command(CMD_GET_CALIB_MEAN, 2)
-        # Bewusst wie libfprint gerechnet, damit die Werte mit den bisherigen
-        # Journalen vergleichbar bleiben. Siehe HINWEIS in README.md: der
-        # Faktor 0xff statt 0x100 ist vermutlich ein Fehler in libfprint.
+        # Deliberately computed the way libfprint does, so the values stay
+        # comparable with earlier journals. Note that the factor 0xff instead of
+        # 0x100 is a bug in libfprint: the mapping is not injective.
         return raw[0] * 0xFF + raw[1]
 
     def calibration_delta(self) -> tuple[int, int, int]:
-        """(Kalibrierungsmittel, Hintergrundmittel, Differenz) bestimmen."""
+        """Return (calibration mean, background mean, difference)."""
         if self.background is None:
             self.capture_background()
         calib = self.calibration_mean()
@@ -219,20 +218,20 @@ class Elan0c63:
         return calib, background, abs(background - calib)
 
     def calibrate(self, max_attempts: int = 50, verbose: bool = True) -> int:
-        """Sensor kalibrieren, bis die Differenz im gruenen Bereich liegt.
+        """Calibrate until the difference is within range.
 
-        ``max_attempts`` ist bewusst 50 statt der neun effektiven Versuche des
-        Systemtreibers; das entspricht dem offenen Upstream-Vorschlag !217.
+        ``max_attempts`` is deliberately 50 rather than the nine effective
+        attempts of the system driver, matching open upstream proposal !217.
 
-        Rueckgabe ist die erreichte Differenz.
+        Returns the difference reached.
         """
         for round_index in range(1, max_attempts + 1):
             calib, background, delta = self.calibration_delta()
 
             if verbose:
                 print(
-                    f"  Kalibrierung {round_index}: Mittel {calib}, "
-                    f"Hintergrund {background}, Differenz {delta}"
+                    f"  calibration {round_index}: mean {calib}, "
+                    f"background {background}, difference {delta}"
                 )
 
             if delta <= CALIBRATION_MAX_DELTA:
@@ -240,11 +239,11 @@ class Elan0c63:
 
             if round_index == 1 and delta > 4000 and verbose:
                 print(
-                    "  Hinweis: sehr grosse Differenz. Liegt ein Finger auf "
-                    "dem Sensor? Bitte abheben."
+                    "  Note: very large difference. Is a finger on the sensor? "
+                    "Please lift it."
                 )
 
-            # Auf den vollstaendigen Zyklus 0x01 -> 0x03 warten.
+            # Wait for the full 0x01 -> 0x03 cycle.
             seen_retry = False
             for _ in range(max_attempts):
                 status = self._command(CMD_GET_CALIB_STATUS, 1)[0]
@@ -258,15 +257,15 @@ class Elan0c63:
 
         _, _, delta = self.calibration_delta()
         raise CalibrationError(
-            f"Kalibrierung nach {max_attempts} Versuchen nicht stabil "
-            f"(Differenz {delta}, erlaubt {CALIBRATION_MAX_DELTA})."
+            f"Calibration not stable after {max_attempts} attempts "
+            f"(difference {delta}, allowed {CALIBRATION_MAX_DELTA})."
         )
 
     def wait_for_finger(self, timeout_ms: int | None = None) -> bool:
-        """Blockieren, bis ein Finger aufliegt.
+        """Block until a finger is present.
 
-        ``timeout_ms=None`` wartet unbegrenzt. Rueckgabe ``True``, wenn ein
-        Finger erkannt wurde.
+        ``timeout_ms=None`` waits indefinitely. Returns ``True`` if a finger was
+        detected.
         """
         self._write(CMD_LED_ON)
         self._write(CMD_PRE_SCAN)
@@ -278,24 +277,22 @@ class Elan0c63:
         if not status:
             return False
         if status[0] == NOT_CALIBRATED:
-            raise ElanError("Sensor meldet: nicht kalibriert (0xff).")
+            raise ElanError("Sensor reports: not calibrated (0xff).")
         return status[0] == FINGER_PRESENT
 
     def capture_press(self, frames: int = 8) -> np.ndarray:
-        """Mehrere Rohframes eines ruhenden Fingerdrucks aufnehmen.
+        """Capture several raw frames of one resting finger press.
 
-        Das ist der eigentliche Unterschied zum libfprint-Pfad: Der Finger
-        bleibt liegen. Wir montieren nichts, sondern behalten alle Frames
-        einzeln. Mehrere Frames desselben Drucks erlauben spaeter, das
-        Sensorrauschen durch Mittelung zu senken.
+        This is the real difference from the libfprint path: the finger stays
+        put. Nothing is assembled; every frame is kept separately. Several
+        frames of the same press allow later selection of the sharpest one.
 
-        Rueckgabe ist ein Array der Form ``(frames, height, width)``.
+        Returns an array of shape ``(frames, height, width)``.
         """
         captured = [self._read_raw_frame()]
 
         for _ in range(frames - 1):
-            # Kurzes Zeitlimit: Wird der Finger abgehoben, brechen wir ab,
-            # statt zu blockieren.
+            # Short timeout: if the finger is lifted, stop rather than block.
             if not self.wait_for_finger(timeout_ms=200):
                 break
             try:

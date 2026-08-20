@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Erstkontakt mit dem Sensor - liest nur, nimmt keinen Finger auf.
+"""First contact with the sensor - reads only, captures no finger.
 
-Dieses Skript beruehrt bewusst nur den harmlosen Teil des Protokolls:
-Firmware, gemeldete Sensormasse und die Kalibrierungswerte des leeren Sensors.
-Es fordert keinen Finger an, speichert nichts und veraendert nichts.
+This script deliberately touches only the harmless part of the protocol:
+firmware, the reported sensor dimensions, and the calibration values of the
+empty sensor. It asks for no finger, stores nothing and changes nothing.
 
-Zweck:
+Purpose:
 
-1. Bestaetigen, dass der direkte USB-Zugriff ohne libfprint funktioniert.
-2. Pruefen, ob der Sensor wirklich 80x80 meldet.
-3. Erste Rohdatenstatistik des Hintergrunds, als Grundlage fuer die
-   Aufloesungsmessung (Hypothese H-02 im Forschungstagebuch).
+1. Confirm that direct USB access without libfprint works.
+2. Check whether the sensor really reports 80x80.
+3. A first raw statistic of the background, as the basis for the resolution
+   measurement.
 
-Aufruf::
+Usage::
 
     sudo tools/.venv/bin/python tools/fpcapture/probe.py
 """
@@ -32,13 +32,13 @@ from elan0c63 import CALIBRATION_MAX_DELTA, Elan0c63, ElanError  # noqa: E402
 
 def main() -> int:
     if os.geteuid() != 0:
-        print("Der USB-Sensor ist nur fuer root zugaenglich. Bitte mit sudo starten:")
+        print("The USB device is root-only. Please run with sudo:")
         print(f"  sudo {sys.executable} {__file__}")
         return 77
 
     print()
-    print("  Sensorpruefung - es wird KEIN Finger aufgenommen.")
-    print("  Bitte den Sensor waehrend des Tests frei lassen.")
+    print("  Sensor check - NO finger is captured.")
+    print("  Please keep the sensor clear during the test.")
     print()
 
     try:
@@ -47,53 +47,53 @@ def main() -> int:
             print()
 
             expected = sensor.info.width == 80 and sensor.info.height == 80
-            print(f"  Gemeldete Masse:        {sensor.info.width} x {sensor.info.height}")
-            print(f"  Erwartet laut Windows:  80 x 80  -> "
-                  f"{'stimmt ueberein' if expected else 'WEICHT AB'}")
-            print(f"  Rohframe-Groesse:       {sensor.info.raw_frame_bytes} Byte "
-                  f"({sensor.info.width * sensor.info.height} Pixel a 2 Byte)")
+            print(f"  reported dimensions:   {sensor.info.width} x {sensor.info.height}")
+            print(f"  expected:              80 x 80  -> "
+                  f"{'matches' if expected else 'DIFFERS'}")
+            print(f"  raw frame size:        {sensor.info.raw_frame_bytes} bytes "
+                  f"({sensor.info.width * sensor.info.height} px at 2 bytes)")
             print()
 
-            print("  Was libfprint davon benutzen wuerde:")
+            print("  What libfprint would use of that:")
             used = min(sensor.info.height, 50)
-            print(f"    Zeilen insgesamt:     {sensor.info.height}")
-            print(f"    Zeilen nach Zuschnitt: {used}  "
+            print(f"    rows in total:       {sensor.info.height}")
+            print(f"    rows after cropping: {used}  "
                   f"(ELAN_MAX_FRAME_HEIGHT)")
             if used < sensor.info.height:
                 lost = sensor.info.height - used
-                print(f"    verworfen:            {lost} Zeilen "
-                      f"= {100 * lost / sensor.info.height:.1f} Prozent")
+                print(f"    discarded:           {lost} rows "
+                      f"= {100 * lost / sensor.info.height:.1f} per cent")
             print()
 
-            print("  Hintergrundmessung und Kalibrierung:")
+            print("  Background measurement and calibration:")
             delta = sensor.calibrate()
-            print(f"  Ergebnis: Differenz {delta} "
-                  f"(Grenzwert {CALIBRATION_MAX_DELTA})")
+            print(f"  result: difference {delta} "
+                  f"(limit {CALIBRATION_MAX_DELTA})")
             print()
 
             background = sensor.background
             assert background is not None
-            print("  Statistik des leeren Sensors (14-Bit-Rohwerte):")
-            print(f"    Minimum:      {int(background.min())}")
-            print(f"    Median:       {int(np.median(background))}")
-            print(f"    Maximum:      {int(background.max())}")
-            print(f"    Standardabw.: {background.std():.1f}")
+            print("  Statistics of the empty sensor (raw 14-bit values):")
+            print(f"    minimum:      {int(background.min())}")
+            print(f"    median:       {int(np.median(background))}")
+            print(f"    maximum:      {int(background.max())}")
+            print(f"    std. dev.:    {background.std():.1f}")
             print()
 
             noise = float(background.std())
             if noise > 300:
-                print("  Hinweis: hohe Streuung im Leerbild. Entweder liegt")
-                print("  etwas auf dem Sensor, oder der Sensor rauscht stark.")
+                print("  Note: high spread in the empty image. Either something is")
+                print("  resting on the sensor, or the sensor is noisy.")
             else:
-                print("  Das Leerbild ist ruhig - der Sensor arbeitet sauber.")
+                print("  The empty image is quiet - the sensor is behaving.")
             print()
-            print("  Es wurde nichts gespeichert und nichts veraendert.")
+            print("  Nothing was stored and nothing was changed.")
 
     except ElanError as exc:
-        print(f"  Fehler: {exc}")
+        print(f"  Error: {exc}")
         print()
-        print("  Haeufigste Ursache: ein laufender fprintd haelt das Geraet.")
-        print("  Pruefen mit:  systemctl status fprintd.service")
+        print("  Most common cause: a running fprintd holds the device.")
+        print("  Check with:  systemctl status fprintd.service")
         return 1
 
     return 0

@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Offline-Auswertung der Rohaufnahmen.
+"""Offline analysis of raw captures.
 
-Arbeitet ausschliesslich auf bereits gespeicherten ``.npz``-Dateien und
-beruehrt den Sensor nicht. Ausgegeben werden nur abgeleitete Kennzahlen,
-niemals Bilddaten selbst.
+Works exclusively on stored ``.npz`` files and never touches the sensor. Only
+derived figures are printed, never image data itself.
 
-Beantwortet drei Fragen:
+Answers three questions:
 
-1. Wie gut ist die Aufnahme ueberhaupt? (Kontrast, Rauschabstand)
-2. Welche Aufloesung hat der Sensor wirklich? (Hypothese H-02)
-3. Gibt es defekte Pixel, die in jedem Bild dieselbe Scheinstruktur
-   erzeugen wuerden?
+1. How good is the capture at all? (contrast, signal-to-noise)
+2. What resolution does the sensor really have?
+3. Are there defective pixels that would produce the same spurious structure
+   in every image?
 
-Aufruf::
+Usage::
 
-    tools/.venv/bin/python tools/fpcapture/analyze.py /pfad/zur/sample-001.npz
-    tools/.venv/bin/python tools/fpcapture/analyze.py --png /pfad/sample-001.npz
+    tools/.venv/bin/python tools/fpcapture/analyze.py /path/to/sample-001.npz
+    tools/.venv/bin/python tools/fpcapture/analyze.py --png /path/sample-001.npz
 """
 
 from __future__ import annotations
@@ -27,9 +26,9 @@ from pathlib import Path
 
 import numpy as np
 
-# Rippenabstand eines erwachsenen Fingers. Die Literatur nennt ueblicherweise
-# 0,4 bis 0,5 mm von Rippenmitte zu Rippenmitte. Wir rechnen mit der Mitte und
-# geben die Spanne als Unsicherheit mit aus.
+# Ridge spacing of an adult finger. The literature gives 0.4 to 0.5 mm from
+# ridge centre to ridge centre. We use the midpoint and report the span as
+# uncertainty.
 RIDGE_PERIOD_MM = 0.45
 RIDGE_PERIOD_MM_MIN = 0.40
 RIDGE_PERIOD_MM_MAX = 0.50
@@ -50,23 +49,23 @@ def signal_image(
     background: np.ndarray,
     mode: str = "best",
 ) -> np.ndarray:
-    """Aus mehreren Frames eines Drucks ein Bild machen.
+    """Turn several frames of one press into a single image.
 
-    Ursprünglich wurde hier über alle Frames gemittelt, mit der Begruendung,
-    das senke das Sensorrauschen um die Wurzel der Framezahl. Die Messung am
-    Korpus vom 20. August widerlegt das: Der beste Einzelframe schlaegt den
-    Mittelwert in 120 von 123 Aufnahmen, im Median um Faktor 1,26.
+    This originally averaged over all frames, reasoned as reducing sensor noise
+    by the square root of the frame count. Measurement against the corpus
+    refutes that: the sharpest single frame beats the mean in 120 of 123
+    captures, by a median factor of 1.26.
 
-    Der Grund ist Bewegung. Waehrend der acht Frames verformt sich die Haut,
-    und der Mittelwert verwischt die Rippen. Eine Ausrichtung per
-    Kreuzkorrelation half nicht (Faktor 0,96) - die Verformung ist also nicht
-    starr, sondern elastisch.
+    The reason is movement. Over the eight frames the skin deforms and the mean
+    smears the ridges. Aligning by cross-correlation did not help either
+    (factor 0.96), which is what marks the deformation as elastic rather than
+    rigid.
 
     ``mode``:
 
-    * ``best``    - schaerfster Einzelframe, gemessen an der Rippenklarheit
-    * ``mean``    - alter Mittelwert, nur noch fuer Vergleiche
-    * ``median``  - robust gegen einzelne Ausreisser, aber ebenfalls unscharf
+    * ``best``    - sharpest single frame, judged by ridge clarity
+    * ``mean``    - the old average, kept only for comparison
+    * ``median``  - robust against single outliers, but equally unsharp
     """
     signals = frames - background
 
@@ -75,7 +74,7 @@ def signal_image(
     if mode == "median":
         return np.median(signals, axis=0)
     if mode != "best":
-        raise ValueError(f"Unbekannter Modus: {mode}")
+        raise ValueError(f"Unknown mode: {mode}")
 
     if signals.shape[0] == 1:
         return signals[0]
@@ -85,12 +84,12 @@ def signal_image(
 
 
 def quality_metrics(signal: np.ndarray, frames: np.ndarray) -> dict:
-    """Kennzahlen zur Aufnahmequalitaet."""
+    """Figures describing capture quality."""
     p1, p99 = np.percentile(signal, [1, 99])
     contrast = float(p99 - p1)
 
-    # Rauschen: Streuung zwischen den Frames an derselben Stelle. Der Finger
-    # liegt still, also ist jede Abweichung Rauschen.
+    # Noise: spread between frames at the same position. The finger is still,
+    # so any deviation is noise.
     if frames.shape[0] > 1:
         noise = float(frames.std(axis=0).mean())
     else:
@@ -98,7 +97,7 @@ def quality_metrics(signal: np.ndarray, frames: np.ndarray) -> dict:
 
     snr = contrast / noise if noise and noise == noise and noise > 0 else float("nan")
 
-    # Abdeckung: Anteil der Flaeche mit nennenswertem Signal.
+    # Coverage: fraction of the area carrying appreciable signal.
     threshold = p1 + 0.15 * contrast
     coverage = float((signal > threshold).mean())
 
@@ -111,15 +110,14 @@ def quality_metrics(signal: np.ndarray, frames: np.ndarray) -> dict:
 
 
 def frame_stability(frames: np.ndarray, background: np.ndarray) -> dict:
-    """Pruefen, wie ruhig der Finger waehrend der acht Frames lag.
+    """Check how still the finger was during the frames.
 
-    Bei einem Press liegt der Finger still, alle Frames muessten also nahezu
-    identisch sein. Weichen einzelne ab, hat sich der Finger gesetzt, bewegt
-    oder der Kontakt war instabil. Solche Frames verschlechtern den Mittelwert,
-    statt ihn zu verbessern.
+    In a press the finger rests, so all frames should be nearly identical. If
+    some deviate, the finger settled, moved, or the contact was unstable. Such
+    frames make the mean worse rather than better.
 
-    Verglichen wird jeder Frame mit dem Median aller Frames. Der Median ist
-    unempfindlich gegen einzelne Ausreisser und damit ein robuster Bezug.
+    Each frame is compared against the median of all frames. The median is
+    insensitive to single outliers and therefore a robust reference.
     """
     if frames.shape[0] < 3:
         return {"valid": False}
@@ -144,16 +142,16 @@ def frame_stability(frames: np.ndarray, background: np.ndarray) -> dict:
 
     values = np.array(correlations)
 
-    # Ausreisser gegen die robuste Streuung der Korrelationen.
+    # Outliers against the robust spread of the correlations.
     median_correlation = float(np.median(values))
     mad = float(np.median(np.abs(values - median_correlation)))
     threshold = median_correlation - max(3 * 1.4826 * mad, 0.02)
     outliers = [int(i) for i in np.nonzero(values < threshold)[0]]
 
-    # Setzt sich der Finger im Verlauf, muessten die spaeteren Frames besser
-    # zum Median passen als die frueheren. Einzelne Ausreisser wuerden diesen
-    # Vergleich verfaelschen - je nachdem in welcher Haelfte sie liegen, kaeme
-    # ein Trend heraus, den es gar nicht gibt. Deshalb erst bereinigen.
+    # If the finger settles over time, later frames should match the median
+    # better than earlier ones. Single outliers would distort that comparison -
+    # depending on which half they fall in, a trend appears that does not exist.
+    # So clean them out first.
     keep = np.ones(len(values), dtype=bool)
     keep[outliers] = False
     indices = np.nonzero(keep)[0]
@@ -165,11 +163,10 @@ def frame_stability(frames: np.ndarray, background: np.ndarray) -> dict:
         early, late = indices[:half], indices[half:]
         trend = float(values[late].mean() - values[early].mean())
 
-        # Ein Unterschied zweier Mittelwerte ist nur dann eine Aussage, wenn er
-        # das Rauschen der Einzelwerte deutlich uebersteigt. Bei acht Frames
-        # ist die Statistik duenn; ohne diese Pruefung meldet schon reines
-        # Rauschen einen scheinbaren Trend. Lieber nichts sagen als etwas
-        # Falsches.
+        # A difference between two means only means something if it clearly
+        # exceeds the noise of the individual values. With eight frames the
+        # statistics are thin; without this check pure noise already reports an
+        # apparent trend. Better to say nothing than something false.
         scatter = float(values[indices].std(ddof=1))
         standard_error = scatter * np.sqrt(1 / len(early) + 1 / len(late))
         trend_significant = bool(
@@ -189,16 +186,16 @@ def frame_stability(frames: np.ndarray, background: np.ndarray) -> dict:
 
 
 def ridge_frequency(signal: np.ndarray) -> dict:
-    """Dominante Rippenfrequenz per 2D-Fouriertransformation bestimmen.
+    """Determine the dominant ridge frequency via a 2D Fourier transform.
 
-    Ein Fingerabdruck ist naeherungsweise ein periodisches Streifenmuster. Im
-    Leistungsspektrum erscheint es als Ring um den Ursprung. Der Radius dieses
-    Rings sagt, wie viele Pixel auf eine Rippenperiode entfallen.
+    A fingerprint is approximately a periodic stripe pattern. In the power
+    spectrum it appears as a ring around the origin, and that ring's radius
+    tells how many pixels fall on one ridge period.
     """
     image = signal - signal.mean()
 
-    # Fensterung gegen Kantenartefakte: Ohne sie erzeugt der harte Bildrand
-    # ein Kreuz im Spektrum, das den echten Ring ueberdecken kann.
+    # Windowing against edge artefacts: without it the hard image border
+    # produces a cross in the spectrum that can mask the real ring.
     window = np.outer(np.hanning(image.shape[0]), np.hanning(image.shape[1]))
     spectrum = np.abs(np.fft.fftshift(np.fft.fft2(image * window))) ** 2
 
@@ -214,9 +211,9 @@ def ridge_frequency(signal: np.ndarray) -> dict:
         if ring.any():
             radial[r] = spectrum[ring].mean()
 
-    # Sehr niedrige Frequenzen sind Helligkeitsverlauf, nicht Rippen.
-    # Sehr hohe sind Rauschen. Bei 80 Pixeln deckt r=3..24 Rippenperioden von
-    # etwa 23 bis 3 Pixeln ab - der physikalisch sinnvolle Bereich.
+    # Very low frequencies are brightness gradient, not ridges; very high ones
+    # are noise. At 80 px, r=3..24 covers ridge periods of roughly 23 to 3
+    # pixels - the physically plausible range.
     lo, hi = 3, min(24, max_radius)
     band = radial[lo:hi]
     if band.size == 0 or not np.isfinite(band).any():
@@ -224,11 +221,11 @@ def ridge_frequency(signal: np.ndarray) -> dict:
 
     peak_radius = int(np.argmax(band)) + lo
 
-    # Der Ringradius ist ganzzahlig, die echte Frequenz liegt aber dazwischen.
-    # Ohne Ausgleich betraegt der Quantisierungsfehler bei einer Periode von
-    # zehn Pixeln bereits rund elf Prozent. Eine Parabel durch den Gipfel und
-    # seine beiden Nachbarn liefert die Zwischenstelle. In logarithmischer
-    # Skala, weil Leistungsspektren exponentiell abfallen.
+    # The ring radius is integral while the real frequency lies between bins.
+    # Uncorrected, the quantisation error at a period of ten pixels is already
+    # around eleven per cent. A parabola through the peak and its two
+    # neighbours gives the intermediate position, on a log scale because power
+    # spectra fall off exponentially.
     refined_radius = float(peak_radius)
     if lo < peak_radius < hi - 1:
         left, centre, right = (
@@ -239,19 +236,19 @@ def ridge_frequency(signal: np.ndarray) -> dict:
         denominator = left - 2 * centre + right
         if denominator != 0:
             offset = 0.5 * (left - right) / denominator
-            # Ein sinnvoller Gipfel liegt im eigenen Bin.
+            # A sensible peak lies within its own bin.
             if abs(offset) <= 0.5:
                 refined_radius = peak_radius + offset
 
-    # Halb-Bin-Ausgleich. Bin r sammelt alle Radien aus [r, r+1) und
-    # repraesentiert damit den Radius r+0.5, nicht r. Ohne diese Korrektur
-    # ueberschaetzt das Verfahren die Rippenperiode systematisch um 3 bis 10
-    # Prozent; gegen synthetische Muster mit bekannter Periode geprueft, sinkt
-    # der mittlere Fehler dadurch von 6,9 auf 1,3 Prozent.
+    # Half-bin correction. Bin r collects all radii in [r, r+1) and therefore
+    # represents radius r+0.5, not r. Without this the method systematically
+    # overestimates the ridge period by 3 to 10 per cent; checked against
+    # synthetic patterns of known period, the mean error drops from 6.9 to
+    # 1.3 per cent.
     period_px = image.shape[0] / (refined_radius + 0.5)
 
-    # Wie deutlich ragt der Ring heraus? Ohne echtes Rippenmuster ist das
-    # Spektrum flach und der Wert nahe 1.
+    # How clearly does the ring stand out? Without a real ridge pattern the
+    # spectrum is flat and the value near 1.
     prominence = float(radial[peak_radius] / np.median(band))
 
     def to_dpi(period_mm: float) -> float:
@@ -269,14 +266,14 @@ def ridge_frequency(signal: np.ndarray) -> dict:
 
 
 def defective_pixels(background: np.ndarray, sigma: float = 6.0) -> dict:
-    """Pixel finden, die im Leerbild dauerhaft aus der Reihe fallen.
+    """Find pixels that are persistently out of line in the empty image.
 
-    Solche Pixel erzeugen in jedem Bild dieselbe Struktur an derselben Stelle.
-    Fuer einen Matcher sieht das aus wie ein echtes Merkmal, das jede Person
-    gemeinsam hat - ein moeglicher Treiber fuer falsche Impostor-Treffer.
+    Such pixels produce the same structure at the same place in every image.
+    To a matcher that looks like a genuine feature every person shares - a
+    possible driver of false impostor matches.
     """
     median = np.median(background)
-    # Robuste Streuung: unempfindlich gegen die Ausreisser, die wir suchen.
+    # Robust spread: insensitive to the outliers we are looking for.
     mad = np.median(np.abs(background - median))
     robust_std = 1.4826 * mad
 
@@ -289,14 +286,14 @@ def defective_pixels(background: np.ndarray, sigma: float = 6.0) -> dict:
 
     height, width = background.shape
 
-    # Geometrie der Auffaelligkeiten. Verstreute Einzelpixel sind etwas ganz
-    # anderes als ein systematischer Rand: Einzelpixel interpoliert man weg,
-    # einen Rand schneidet man ab.
+    # Geometry of the anomalies. Scattered single pixels are something quite
+    # different from a systematic border: single pixels get interpolated away,
+    # a border gets cropped off.
     row_counts = mask.sum(axis=1)
     column_counts = mask.sum(axis=0)
 
-    # Wie viele der Auffaelligkeiten verschwinden, wenn wir einen Rand der
-    # Breite m rundherum ausschliessen?
+    # How many anomalies disappear if a border of width m is excluded all
+    # round?
     margin_effect = []
     for margin in range(0, 9):
         if margin == 0:
@@ -329,17 +326,17 @@ def defective_pixels(background: np.ndarray, sigma: float = 6.0) -> dict:
 
 
 def export_png(signal: np.ndarray, destination: Path) -> None:
-    """Sichtprüfbares Graustufenbild schreiben.
+    """Write a greyscale image for visual inspection.
 
-    Nur fuer die Kontrolle durch den Benutzer gedacht. Die Datei enthaelt
-    biometrische Daten und wird deshalb im Korpusverzeichnis mit 0600 abgelegt.
+    Intended for the user's own check only. The file contains biometric data
+    and is therefore written into the corpus directory with mode 0600.
     """
     from PIL import Image
 
     lo, hi = np.percentile(signal, [1, 99])
     scaled = np.clip((signal - lo) / max(hi - lo, 1e-9), 0, 1)
-    # Rippen beruehren den Sensor und liefern hohe Werte; invertiert wirken
-    # sie dunkel wie auf einem klassischen Abdruck.
+    # Ridges touch the sensor and give high values; inverted they read dark,
+    # like a classic inked print.
     image = Image.fromarray(((1 - scaled) * 255).astype(np.uint8), mode="L")
     image = image.resize((signal.shape[1] * 4, signal.shape[0] * 4),
                          Image.NEAREST)
@@ -352,81 +349,81 @@ def report(path: Path, want_png: bool) -> None:
     signal = signal_image(frames, background)
 
     print()
-    print(f"  Aufnahme: {path.name}")
-    print(f"  Person {metadata['subject']}, Finger {metadata['finger']}, "
-          f"{metadata['frames']} Frames")
+    print(f"  capture: {path.name}")
+    print(f"  subject {metadata['subject']}, finger {metadata['finger']}, "
+          f"{metadata['frames']} frames")
     print()
 
     quality = quality_metrics(signal, frames)
-    print("  Aufnahmequalitaet")
-    print(f"    Kontrast:            {quality['contrast']:8.1f}")
-    print(f"    Rauschen:            {quality['noise']:8.1f}")
-    print(f"    Rauschabstand:       {quality['snr']:8.1f}")
-    print(f"    Flaechenabdeckung:   {quality['coverage'] * 100:8.1f} Prozent")
+    print("  Capture quality")
+    print(f"    contrast:           {quality['contrast']:8.1f}")
+    print(f"    noise:              {quality['noise']:8.1f}")
+    print(f"    signal-to-noise:    {quality['snr']:8.1f}")
+    print(f"    coverage:           {quality['coverage'] * 100:8.1f} per cent")
     print()
 
     stability = frame_stability(frames, background)
-    print("  Stabilitaet der acht Frames (lag der Finger still?)")
+    print("  Frame stability (did the finger stay still?)")
     if not stability["valid"]:
-        print("    Zu wenige Frames fuer eine Aussage.")
+        print("    Too few frames to say anything.")
     else:
         bars = " ".join(f"{v:.3f}" for v in stability["correlations"])
-        print(f"    Uebereinstimmung je Frame: {bars}")
-        print(f"    schlechtester {stability['worst']:.3f}, "
-              f"bester {stability['best']:.3f}, "
-              f"Spanne {stability['spread']:.3f}")
+        print(f"    agreement per frame: {bars}")
+        print(f"    worst {stability['worst']:.3f}, "
+              f"best {stability['best']:.3f}, "
+              f"span {stability['spread']:.3f}")
 
         if stability["outliers"]:
-            print(f"    Ausreisser: Frame {stability['outliers']}")
+            print(f"    outliers: frame {stability['outliers']}")
         if not stability["trend_significant"]:
-            print("    Kein belegbarer Trend ueber die Frames.")
+            print("    No demonstrable trend across the frames.")
         elif stability["trend"] > 0:
-            print(f"    Trend: spaetere Frames sind besser "
-                  f"(+{stability['trend']:.3f}). Der Finger setzt sich noch;")
-            print("    die ersten Frames sollten verworfen werden.")
+            print(f"    Trend: later frames are better "
+                  f"(+{stability['trend']:.3f}). The finger is still settling;")
+            print("    the first frames should be discarded.")
         else:
-            print(f"    Trend: spaetere Frames sind schlechter "
-                  f"({stability['trend']:.3f}). Der Finger rutscht oder")
-            print("    der Kontakt laesst nach; spaete Frames verwerfen.")
+            print(f"    Trend: later frames are worse "
+                  f"({stability['trend']:.3f}). The finger is slipping or")
+            print("    the contact is fading; discard late frames.")
     print()
 
     ridge = ridge_frequency(signal)
-    print("  Aufloesung aus der Rippenfrequenz (Hypothese H-02)")
+    print("  Resolution from the ridge frequency")
     if not ridge["valid"]:
-        print("    Kein auswertbares Muster gefunden.")
+        print("    No usable pattern found.")
     elif ridge["prominence"] < 1.5:
-        print(f"    Kein klares Rippenmuster (Deutlichkeit "
-              f"{ridge['prominence']:.2f}, noetig > 1.5).")
-        print("    Vermutlich zu schwacher Fingerkontakt.")
+        print(f"    No clear ridge pattern (prominence "
+              f"{ridge['prominence']:.2f}, need > 1.5).")
+        print("    Probably too weak a finger contact.")
     elif ridge["prominence"] < 50:
-        # Erfahrungswert aus den ersten Messungen: gute Aufnahmen erreichen
-        # Deutlichkeiten ueber 100. Darunter wandert der Spektralgipfel
-        # merklich ins Rauschen ab und die Periode wird zu kurz geschaetzt.
-        print(f"    Schwaches Rippenmuster (Deutlichkeit "
-              f"{ridge['prominence']:.1f}; gute Aufnahmen liegen ueber 100).")
-        print(f"    Periode {ridge['period_px']:.1f} Pixel, daraus "
-              f"{ridge['dpi']:.0f} dpi - aber unzuverlaessig.")
-        print("    Diese Aufnahme nicht zur Aufloesungsbestimmung heranziehen.")
+        # Empirical from the first measurements: good captures reach
+        # prominences above 100. Below that the spectral peak drifts
+        # noticeably into the noise and the period is underestimated.
+        print(f"    Weak ridge pattern (prominence "
+              f"{ridge['prominence']:.1f}; good captures exceed 100).")
+        print(f"    period {ridge['period_px']:.1f} px, giving "
+              f"{ridge['dpi']:.0f} dpi - but unreliable.")
+        print("    Do not use this capture to determine resolution.")
     else:
-        print(f"    Rippenperiode:       {ridge['period_px']:8.1f} Pixel")
-        print(f"    Deutlichkeit:        {ridge['prominence']:8.2f}")
-        print(f"    Geschaetzte Aufloesung: {ridge['dpi']:6.0f} dpi "
-              f"(Spanne {ridge['dpi_min']:.0f} bis {ridge['dpi_max']:.0f})")
+        print(f"    ridge period:       {ridge['period_px']:8.1f} px")
+        print(f"    prominence:         {ridge['prominence']:8.2f}")
+        print(f"    estimated resolution: {ridge['dpi']:6.0f} dpi "
+              f"(range {ridge['dpi_min']:.0f} to {ridge['dpi_max']:.0f})")
         print()
         deviation = abs(ridge["dpi"] - 500) / 500
         if deviation < 0.15:
-            print("    -> vertraeglich mit der von NBIS angenommenen 500 dpi.")
+            print("    -> consistent with the 500 dpi NBIS assumes.")
         else:
-            print(f"    -> weicht um {deviation * 100:.0f} Prozent von 500 dpi ab.")
-            print("       Das wuerde die NBIS-Minutienparameter verstimmen.")
+            print(f"    -> deviates from 500 dpi by {deviation * 100:.0f} per cent.")
+            print("       That would detune the NBIS minutiae parameters.")
     print()
 
     defects = defective_pixels(background)
-    print("  Auffaellige Pixel im Leerbild")
-    print(f"    Anzahl:              {defects['count']:8d} von "
-          f"{background.size} ({defects['fraction'] * 100:.2f} Prozent)")
+    print("  Anomalous pixels in the empty image")
+    print(f"    count:              {defects['count']:8d} of "
+          f"{background.size} ({defects['fraction'] * 100:.2f} per cent)")
     if defects["count"]:
-        print(f"    groesste Abweichung: {defects['max_deviation']:8.1f} Sigma")
+        print(f"    largest deviation:  {defects['max_deviation']:8.1f} sigma")
         print()
         def summarise(name: str, indices: list[int], total: int) -> None:
             if not indices:
@@ -434,18 +431,18 @@ def report(path: Path, want_png: bool) -> None:
             elif len(indices) <= 12:
                 print(f"      {name:<22} {indices}")
             else:
-                print(f"      {name:<22} {len(indices)} von {total} "
-                      f"(von {min(indices)} bis {max(indices)})")
+                print(f"      {name:<22} {len(indices)} of {total} "
+                      f"(from {min(indices)} to {max(indices)})")
 
         height, width = background.shape
-        print("    Geometrie:")
-        summarise("betroffene Zeilen:", defects["affected_rows"], height)
-        summarise("betroffene Spalten:", defects["affected_columns"], width)
-        summarise("komplette Zeilen:", defects["full_rows"], height)
-        summarise("komplette Spalten:", defects["full_columns"], width)
+        print("    Geometry:")
+        summarise("affected rows:", defects["affected_rows"], height)
+        summarise("affected columns:", defects["affected_columns"], width)
+        summarise("complete rows:", defects["full_rows"], height)
+        summarise("complete columns:", defects["full_columns"], width)
         print()
-        print("    Wirkung eines Randausschlusses:")
-        print(f"      {'Rand':>6} {'verbleibend':>12} {'Restflaeche':>12}")
+        print("    Effect of excluding a border:")
+        print(f"      {'border':>6} {'remaining':>12} {'area left':>12}")
         for entry in defects["margin_effect"]:
             print(f"      {entry['margin']:6d} {entry['remaining']:12d} "
                   f"{entry['kept_fraction'] * 100:11.1f}%")
@@ -455,45 +452,43 @@ def report(path: Path, want_png: bool) -> None:
             (e for e in defects["margin_effect"] if e["remaining"] == 0), None
         )
         if clean:
-            print(f"    -> Ein Rand von {clean['margin']} Pixeln entfernt alle "
-                  f"Auffaelligkeiten")
-            print(f"       und behaelt {clean['kept_fraction'] * 100:.1f} Prozent "
-                  f"der Flaeche ({clean['kept_pixels']} Pixel).")
+            print(f"    -> A border of {clean['margin']} px removes every anomaly")
+            print(f"       and keeps {clean['kept_fraction'] * 100:.1f} per cent "
+                  f"of the area ({clean['kept_pixels']} px).")
             libfprint_pixels = 50 * background.shape[1]
-            print(f"       Zum Vergleich: libfprint behaelt "
-                  f"{libfprint_pixels} Pixel "
-                  f"({libfprint_pixels / background.size * 100:.1f} Prozent).")
+            print(f"       For comparison, libfprint keeps "
+                  f"{libfprint_pixels} px "
+                  f"({libfprint_pixels / background.size * 100:.1f} per cent).")
         else:
-            print("    -> Kein Randausschluss bis 8 Pixel raeumt alles ab.")
-            print("       Es gibt also auch verstreute Einzeldefekte im Inneren,")
-            print("       die interpoliert statt abgeschnitten werden muessen.")
+            print("    -> No border up to 8 px clears everything.")
+            print("       So there are scattered single defects inside as well,")
+            print("       which need interpolating rather than cropping.")
     else:
-        print("    Keine. Der Sensor ist gleichmaessig.")
+        print("    None. The sensor is uniform.")
     print()
 
     if want_png:
         destination = path.with_suffix(".png")
         export_png(signal, destination)
-        print(f"  Sichtkontrolle gespeichert: {destination}")
-        print("  (liegt im root-geschuetzten Korpus, nicht im Projekt)")
+        print(f"  visual check written: {destination}")
+        print("  (in the protected corpus, not in the repository)")
         print()
 
 
 def selftest() -> int:
-    """Die Aufloesungsmessung gegen Muster mit bekannter Periode pruefen.
+    """Check the resolution measurement against patterns of known period.
 
-    Ein Messwerkzeug, das nie gegen eine bekannte Wahrheit geprueft wurde, ist
-    kein Messwerkzeug. Genau dieser Test hat einen systematischen Halb-Bin-
-    Versatz aufgedeckt, der die Periode um bis zu zehn Prozent zu gross
-    ausgab.
+    A measuring tool that was never checked against a known truth is not a
+    measuring tool. This very test uncovered a systematic half-bin offset that
+    reported the period as much as ten per cent too large.
     """
     rng = np.random.default_rng(42)
     periods = [5.0, 6.0, 7.0, 8.0, 9.0, 9.5, 10.0, 11.0, 12.0, 14.0]
     errors = []
 
     print()
-    print("  Selbsttest der Rippenfrequenz-Messung")
-    print(f"  {'vorgegeben':>12} {'gemessen':>10} {'Fehler':>9}")
+    print("  Self-test of the ridge frequency measurement")
+    print(f"  {'given':>12} {'measured':>10} {'error':>9}")
 
     for true_period in periods:
         y, x = np.mgrid[0:80, 0:80]
@@ -511,37 +506,37 @@ def selftest() -> int:
     noise_prominence = ridge_frequency(rng.normal(0, 100, (80, 80)))["prominence"]
 
     print()
-    print(f"  mittlerer Fehler: {np.mean(errors):.1f} Prozent")
-    print(f"  groesster Fehler: {max(errors):.1f} Prozent")
-    print(f"  Rauschkontrolle:  Deutlichkeit {noise_prominence:.2f} "
-          f"(muss unter 1.5 liegen)")
+    print(f"  mean error:    {np.mean(errors):.1f} per cent")
+    print(f"  largest error: {max(errors):.1f} per cent")
+    print(f"  noise control: prominence {noise_prominence:.2f} "
+          f"(must be below 1.5)")
     print()
 
     ok = max(errors) < 5.0 and noise_prominence < 1.5
-    print(f"  Ergebnis: {'bestanden' if ok else 'NICHT BESTANDEN'}")
+    print(f"  result: {'passed' if ok else 'FAILED'}")
     print()
     return 0 if ok else 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Offline-Auswertung einer Rohaufnahme.")
+        description="Offline analysis of a raw capture.")
     parser.add_argument("samples", nargs="*", type=Path)
     parser.add_argument("--png", action="store_true",
-                        help="Graustufenbild zur Sichtkontrolle schreiben")
+                        help="write a greyscale image for visual inspection")
     parser.add_argument("--selftest", action="store_true",
-                        help="Messmethode gegen bekannte Muster pruefen")
+                        help="check the method against known patterns")
     args = parser.parse_args()
 
     if args.selftest:
         return selftest()
 
     if not args.samples:
-        parser.error("Bitte mindestens eine Aufnahme angeben oder --selftest.")
+        parser.error("Give at least one capture, or --selftest.")
 
     for path in args.samples:
         if not path.exists():
-            print(f"Nicht gefunden: {path}", file=sys.stderr)
+            print(f"Not found: {path}", file=sys.stderr)
             return 1
         report(path, args.png)
 

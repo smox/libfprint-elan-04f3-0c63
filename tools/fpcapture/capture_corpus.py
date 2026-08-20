@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Rohaufnahmen fuer den Offline-Korpus erfassen.
+"""Record raw captures for the offline corpus.
 
-Nimmt native 80x80-Rohframes des ELAN 04f3:0c63 auf und legt sie ausserhalb
-des Projektverzeichnisses ab. Es wird nichts beschnitten, nichts montiert und
-nichts normalisiert.
+Captures native 80x80 raw frames from the ELAN 04f3:0c63 and stores them
+outside any repository. Nothing is cropped, assembled or normalised.
 
 Aufruf::
 
@@ -11,12 +10,11 @@ Aufruf::
         --subject alice --samples 15 \\
         --fingers right-index right-middle left-index left-middle
 
-Datenschutzregeln, die dieses Skript technisch erzwingt:
+Data-protection rules this script enforces in code:
 
-* Der Ausgabepfad darf niemals innerhalb des Projektverzeichnisses liegen.
-* Das Zielverzeichnis wird mit 0700 angelegt und gehoert dem aufrufenden
-  Benutzer, nicht root.
-* Jede Person muss vor der ersten Aufnahme ausdruecklich zustimmen.
+* The output path must never lie inside a git repository.
+* The target directory is created 0700 and owned by the calling user, not root.
+* Every person must consent explicitly before their first capture.
 """
 
 from __future__ import annotations
@@ -36,7 +34,6 @@ from analyze import quality_metrics, ridge_frequency  # noqa: E402
 from elan0c63 import CalibrationError, Elan0c63, ElanError  # noqa: E402
 
 DEFAULT_CORPUS = Path("/var/lib/fprint-research/corpus")
-PROJECT_DIR = Path("/home/michael/rootserver")
 
 FINGERS = (
     "left-thumb", "left-index", "left-middle", "left-ring", "left-little",
@@ -45,11 +42,11 @@ FINGERS = (
 
 
 def invoking_user() -> tuple[int, int] | None:
-    """Die Kennung des Benutzers ermitteln, der ``sudo`` aufgerufen hat.
+    """Identify the user who invoked ``sudo``.
 
-    Das Skript braucht root, weil das USB-Geraet nur root gehoert. Die
-    erzeugten Dateien sollen aber dem eigentlichen Benutzer gehoeren, sonst
-    kommt er ohne ``sudo`` nicht mehr an seine eigenen Aufnahmen.
+    The script needs root because the USB device is root-owned, but the files
+    it creates should belong to the actual user - otherwise they cannot reach
+    their own captures without ``sudo``.
     """
     uid, gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
     if uid is None or gid is None:
@@ -58,52 +55,83 @@ def invoking_user() -> tuple[int, int] | None:
 
 
 def hand_over(path: Path, owner: tuple[int, int] | None) -> None:
-    """Datei oder Verzeichnis dem aufrufenden Benutzer uebereignen."""
+    """Hand a file or directory over to the calling user."""
     if owner is None:
         return
     try:
         os.chown(path, owner[0], owner[1])
     except OSError:
-        # Nicht kritisch: Die Daten sind gespeichert, nur der Zugriff ist
-        # dann weiterhin auf root beschraenkt.
+        # Not critical: the data is stored, only access stays root-only.
         pass
 
 
-def guard_output_path(path: Path) -> Path:
-    """Sicherstellen, dass biometrische Daten nie im Projektordner landen."""
-    resolved = path.resolve()
-    try:
-        resolved.relative_to(PROJECT_DIR.resolve())
-    except ValueError:
-        return resolved
+def enclosing_repository(path: Path) -> Path | None:
+    """Return the nearest enclosing git repository, or None.
 
-    raise SystemExit(
-        f"Abbruch: {resolved} liegt im Projektverzeichnis.\n"
-        "Rohaufnahmen duerfen niemals dorthin, weil sie sonst in einem\n"
-        "Git-Repository landen koennten. Bitte einen Pfad ausserhalb waehlen."
-    )
+    Checks the path itself and every parent. Also catches a path that does not
+    exist yet, since the directory is created later.
+    """
+    for candidate in [path, *path.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def guard_output_path(path: Path) -> Path:
+    """Refuse to write raw captures anywhere inside a git repository.
+
+    Do not compare against a fixed project path: that only protects the machine
+    it was written on, and fails silently everywhere else. Detect a repository
+    instead, wherever the user points this.
+    """
+    resolved = path.resolve()
+
+    repository = enclosing_repository(resolved)
+    if repository is not None:
+        raise SystemExit(
+            f"Refusing to write to {resolved}.\n"
+            f"It lies inside the git repository at {repository}.\n"
+            "Raw fingerprint captures must never end up somewhere they could be\n"
+            "committed. Choose a path outside any repository."
+        )
+
+    # Second line of defence: the directory this script lives in.
+    script_repository = enclosing_repository(Path(__file__).resolve().parent)
+    if script_repository is not None:
+        try:
+            resolved.relative_to(script_repository)
+        except ValueError:
+            pass
+        else:
+            raise SystemExit(
+                f"Refusing to write to {resolved}.\n"
+                f"It lies below this project at {script_repository}.\n"
+                "Choose a path outside it."
+            )
+
+    return resolved
 
 
 def confirm_consent(subject: str, corpus: Path) -> None:
-    """Einmalige, dokumentierte Einwilligung pro Person einholen."""
-    marker = corpus / subject / "EINWILLIGUNG.json"
+    """Obtain and record a one-time consent per person."""
+    marker = corpus / subject / "CONSENT.json"
     if marker.exists():
         return
 
     print()
-    print(f"  Erstaufnahme fuer '{subject}'. Bitte bestaetigen:")
+    print(f"  First capture for '{subject}'. Please confirm:")
     print()
-    print("  - Es werden Rohbilder deines Fingerabdrucks gespeichert.")
-    print(f"  - Ablage ausschliesslich lokal unter {corpus}, nur fuer dich lesbar.")
-    print("  - Keine Uebertragung ins Internet, in kein Git-Repository,")
-    print("    an keinen externen Dienst.")
-    print("  - Verwendung ausschliesslich zum Test dieses Sensors.")
-    print("  - Loeschung auf Wunsch jederzeit und nach Projektabschluss.")
+    print("  - Raw images of your fingerprint will be stored.")
+    print(f"  - Stored locally under {corpus} only, readable only by you.")
+    print("  - No transfer to the internet, to any git repository,")
+    print("    or to any external service.")
+    print("  - Used solely for testing this sensor.")
+    print("  - Deletable on request at any time, and when the project ends.")
     print()
 
-    answer = input(f"  Stimmt {subject} zu? [ja/nein] ").strip().lower()
-    if answer not in ("ja", "j", "yes", "y"):
-        raise SystemExit("Ohne Einwilligung wird nichts aufgenommen. Abbruch.")
+    answer = input(f"  Does {subject} consent? [yes/no] ").strip().lower()
+    if answer not in ("yes", "y", "ja", "j"):
+        raise SystemExit("Nothing is captured without consent. Aborting.")
 
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(
@@ -123,7 +151,7 @@ def confirm_consent(subject: str, corpus: Path) -> None:
     os.chmod(marker, 0o600)
     hand_over(marker, invoking_user())
     hand_over(marker.parent, invoking_user())
-    print("  Einwilligung dokumentiert.\n")
+    print("  Consent recorded.\n")
 
 
 def next_index(target: Path) -> int:
@@ -134,12 +162,12 @@ def next_index(target: Path) -> int:
 
 
 def live_quality(frames: np.ndarray, background: np.ndarray) -> dict:
-    """Sofortbewertung einer frischen Aufnahme.
+    """Score a fresh capture immediately.
 
-    Die Messungen vom 20. August zeigten eine Schwankung der Rippenklarheit um
-    Faktor neun zwischen aufeinanderfolgenden Drucken desselben Fingers. Ohne
-    Rueckmeldung waehrend der Aufnahme merkt niemand, dass ein Druck schlecht
-    war - und der Korpus fuellt sich mit unbrauchbaren Aufnahmen.
+    Measurements showed ridge clarity varying by a factor of nine between
+    consecutive presses of the same finger. Without feedback during the
+    session nobody notices a bad press, and the corpus fills up with
+    unusable captures.
     """
     signal = frames.astype(np.float64).mean(axis=0) - background.astype(np.float64)
     metrics = quality_metrics(signal, frames.astype(np.float64))
@@ -147,17 +175,16 @@ def live_quality(frames: np.ndarray, background: np.ndarray) -> dict:
 
     metrics["prominence"] = ridge["prominence"] if ridge.get("valid") else 0.0
 
-    # Schwellen aus den ersten Messungen. Gute Aufnahmen erreichten
-    # Deutlichkeiten von 122 und 164, eine schwache nur 18. Bewusst grosszuegig
-    # gewaehlt: Der Korpus soll auch schlechtere Aufnahmen enthalten, denn erst
-    # daraus laesst sich spaeter eine belastbare Qualitaetsschwelle ableiten.
-    # Diese Anzeige dient der Rueckmeldung, nicht der Auswahl.
+    # Thresholds from the first measurements: good captures reached clarities of
+    # 122 and 164, a weak one only 18. Deliberately generous - the corpus should
+    # contain weaker captures too, because only they allow a defensible quality
+    # threshold to be derived later. This display is feedback, not selection.
     if metrics["prominence"] >= 100 and metrics["snr"] >= 8:
-        metrics["verdict"] = "gut"
+        metrics["verdict"] = "good"
     elif metrics["prominence"] >= 40:
-        metrics["verdict"] = "brauchbar"
+        metrics["verdict"] = "usable"
     else:
-        metrics["verdict"] = "schwach"
+        metrics["verdict"] = "weak"
 
     return metrics
 
@@ -172,22 +199,22 @@ def capture_finger(
     delta: int,
     owner: tuple[int, int] | None,
 ) -> dict:
-    """Eine Serie fuer genau einen Finger aufnehmen."""
+    """Record a series for exactly one finger."""
     start = next_index(target)
     saved = 0
-    verdicts = {"gut": 0, "brauchbar": 0, "schwach": 0}
+    verdicts = {"good": 0, "usable": 0, "weak": 0}
 
     for offset in range(samples):
         index = start + offset
-        print(f"  [{offset + 1}/{samples}] {finger}: auflegen und ruhig halten ...")
+        print(f"  [{offset + 1}/{samples}] {finger}: place finger and hold still ...")
 
         try:
             if not sensor.wait_for_finger():
-                print("      kein Finger erkannt, Runde uebersprungen.")
+                print("      no finger detected, round skipped.")
                 continue
             frames = sensor.capture_press(frames=frames_per_sample)
         except ElanError as exc:
-            print(f"      Aufnahmefehler: {exc}")
+            print(f"      capture error: {exc}")
             continue
 
         quality = live_quality(frames, sensor.background)
@@ -212,7 +239,7 @@ def capture_finger(
                     "snr": quality["snr"],
                     "coverage": quality["coverage"],
                     "ridge_prominence": quality["prominence"],
-                    "note": "Rohframes, ungeschnitten und unnormalisiert",
+                    "note": "raw frames, uncropped and unnormalised",
                 }
             ),
         )
@@ -222,11 +249,11 @@ def capture_finger(
         verdicts[quality["verdict"]] += 1
 
         print(
-            f"      {frames.shape[0]} Frames - Klarheit "
-            f"{quality['prominence']:5.0f}, Rauschabstand {quality['snr']:4.1f}, "
-            f"Abdeckung {quality['coverage'] * 100:4.1f}%  -> {quality['verdict']}"
+            f"      {frames.shape[0]} frames - clarity "
+            f"{quality['prominence']:5.0f}, SNR {quality['snr']:4.1f}, "
+            f"coverage {quality['coverage'] * 100:4.1f}%  -> {quality['verdict']}"
         )
-        print("      Finger abheben.")
+        print("      Lift the finger.")
 
         while sensor.wait_for_finger(timeout_ms=300):
             pass
@@ -245,7 +272,7 @@ def capture_session(args: argparse.Namespace) -> int:
 
     confirm_consent(args.subject, corpus)
 
-    total = {"saved": 0, "gut": 0, "brauchbar": 0, "schwach": 0}
+    total = {"saved": 0, "good": 0, "usable": 0, "weak": 0}
 
     with Elan0c63() as sensor:
         print(f"  {sensor.info}")
@@ -265,16 +292,15 @@ def capture_session(args: argparse.Namespace) -> int:
             hand_over(target.parent, owner)
             hand_over(target, owner)
 
-            # Vor jedem Finger neu kalibrieren. Der Hintergrund driftet mit der
-            # Sensortemperatur, und nach vielen Drucken koennen Rueckstaende auf
-            # der Flaeche liegen.
-            print("  Sensor bitte frei lassen - Hintergrundmessung laeuft.")
+            # Recalibrate before each finger: the background drifts with sensor
+            # temperature, and residue can build up on the surface.
+            print("  Keep the sensor clear - background measurement running.")
             try:
                 delta = sensor.calibrate(verbose=False)
             except CalibrationError as exc:
-                print(f"  Kalibrierung fehlgeschlagen: {exc}")
+                print(f"  Calibration failed: {exc}")
                 return 1
-            print(f"  Kalibrierung stabil, Differenz {delta}.")
+            print(f"  Calibration stable, difference {delta}.")
             print()
 
             result = capture_finger(
@@ -294,48 +320,48 @@ def capture_session(args: argparse.Namespace) -> int:
             print()
 
             if position < len(args.fingers):
-                input("  Weiter mit dem naechsten Finger - Eingabetaste ... ")
+                input("  Continue with the next finger - press Enter ... ")
                 print()
 
-    print(f"  Sitzung beendet: {total['saved']} Aufnahmen gespeichert.")
-    print(f"  Verteilung: gut {total['gut']}, brauchbar {total['brauchbar']}, "
+    print(f"  Session finished: {total['saved']} captures stored.")
+    print(f"  distribution: good {total['gut']}, usable {total['brauchbar']}, "
           f"schwach {total['schwach']}")
     print()
-    print("  Alle Aufnahmen bleiben im Korpus, auch die schwachen. Erst aus")
-    print("  der vollen Bandbreite laesst sich eine Qualitaetsschwelle ableiten.")
+    print("  All captures stay in the corpus, including the weak ones. Only the")
+    print("  full range allows a quality threshold to be derived.")
 
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Rohaufnahmen des ELAN 04f3:0c63 fuer den Offline-Korpus.",
+        description="Record raw ELAN 04f3:0c63 captures for the offline corpus.",
     )
     parser.add_argument("--subject", required=True,
-                        help="Kennung der Person, zum Beispiel 'alice'")
+                        help="identifier for the person, for example 'alice'")
     parser.add_argument("--fingers", required=True, nargs="+", choices=FINGERS,
                         metavar="FINGER",
-                        help="ein oder mehrere Finger, nacheinander aufgenommen")
+                        help="one or more fingers, recorded in sequence")
     parser.add_argument("--samples", type=int, default=15,
-                        help="Anzahl der Aufnahmen in dieser Sitzung")
+                        help="number of captures in this session")
     parser.add_argument("--frames", type=int, default=8,
-                        help="Rohframes pro Aufnahme")
+                        help="raw frames per capture")
     parser.add_argument("--corpus", default=str(DEFAULT_CORPUS),
-                        help="Zielverzeichnis, muss ausserhalb des Projekts liegen")
+                        help="target directory, must lie outside any repository")
     args = parser.parse_args()
 
     if os.geteuid() != 0:
-        print("Der USB-Sensor ist nur fuer root zugaenglich. Bitte mit sudo starten:")
+        print("The USB device is root-only. Please run with sudo:")
         print(f"  sudo {sys.executable} {' '.join(sys.argv)}")
         return 77
 
     try:
         return capture_session(args)
     except ElanError as exc:
-        print(f"Fehler: {exc}")
+        print(f"Error: {exc}")
         return 1
     except KeyboardInterrupt:
-        print("\nAbgebrochen. Bereits gespeicherte Aufnahmen bleiben erhalten.")
+        print("\nAborted. Captures already stored are kept.")
         return 130
 
 

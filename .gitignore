@@ -1,10 +1,10 @@
-# Biometrische Daten dürfen dieses Verzeichnis niemals als Repository verlassen.
-# Der Rohdatenkorpus liegt bewusst außerhalb des Projekts unter
-# /var/lib/fprint-research/ (root-exklusiv, 0700).
-# Diese Regeln sind eine zusätzliche Absicherung, falls hier später ein
-# Repository angelegt wird.
+# Biometric data must never leave this directory as part of a repository.
+# The raw corpus deliberately lives outside the project under
+# /var/lib/fprint-research/ (root-exclusive, 0700), and capture_corpus.py
+# refuses to write into any git repository. These rules are a second line of
+# defence.
 
-# Rohaufnahmen, Frames, Templates
+# Raw captures, frames, templates
 *.raw
 *.frame
 *.frames
@@ -13,34 +13,29 @@
 *.xyt
 *.tmpl
 *.template
+*.npz
 fprint-corpus/
 raw-captures/
 test-root/
 
-# Journale können Gerätedetails enthalten
+# Journals can carry device detail
 *.log
 
-# Gebaute Artefakte
+# Build artefacts
+build/
+rpm/
 build-rpms/
 build-rpms-openssl/
 *.rpm
-
-# Python-Arbeitsumgebung der Forschungswerkzeuge
-tools/.venv/
-__pycache__/
-*.pyc
-
-# Upstream-Quelltarballs: fünf identische Kopien à 9,3 MB, bei freedesktop
-# herunterladbar. Die Prüfsummen stehen in den CHECKSUMS.sha256 der Buildordner.
+*.o
+*.so
 *.tar.bz2
 *.tar.gz
 
-# Bauartefakte
-tools/elan0c63-tod/build/
-tools/elan0c63-tod/rpm/
-*.o
-*.so
-
-# osc-Arbeitsverzeichnisse
+# osc working directories
 .osc/
-test-root/
+
+# Python working environment
+tools/.venv/
+__pycache__/
+*.pyc
