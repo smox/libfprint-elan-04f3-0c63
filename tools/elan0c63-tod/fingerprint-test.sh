@@ -56,6 +56,28 @@ readonly SENSOR_ID="04f3:0c63"
 note() { printf '  %s\n' "$*"; }
 head2() { printf '\n== %s ==\n' "$*"; }
 
+# Package queries have to work on both rpm and dpkg systems: the driver is
+# packaged for openSUSE and for Ubuntu, and the report is only useful if it
+# names the versions on either. Without this the OpenCV line reads "unknown" on
+# Ubuntu, which is the one version that differs most between the two (4.6 there
+# against 4.13 on Tumbleweed) and so the one most worth having.
+pkg_version() {
+  rpm -q "$1" 2>/dev/null && return 0
+  dpkg-query -W -f='${Package}-${Version}\n' "$1" 2>/dev/null && return 0
+  return 1
+}
+
+owning_package() {
+  local file="$1"
+  [[ -n "${file}" ]] || { echo unknown; return; }
+  rpm -qf --qf '%{NAME}-%{VERSION}\n' "${file}" 2>/dev/null && return
+  # dpkg records the symlink target's path, so resolve it before asking.
+  dpkg-query -S "$(readlink -f "${file}")" 2>/dev/null \
+    | sed 's/:.*//' | head -1 | while read -r pkg; do pkg_version "${pkg}"; done \
+    | grep . && return
+  echo unknown
+}
+
 # ---------------------------------------------------------------- preflight
 
 head2 "Checking prerequisites"
@@ -197,14 +219,10 @@ head2 "Writing report"
   echo "board:     $(cat /sys/class/dmi/id/board_name 2>/dev/null || echo unknown)"
   echo "os:        $(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME}" || echo unknown)"
   echo "kernel:    $(uname -r)"
-  echo "libfprint: $(rpm -q libfprint-2-tod1 2>/dev/null \
-                    || dpkg-query -W -f='${Version}' libfprint-2-tod1 2>/dev/null \
-                    || echo unknown)"
-  echo "driver:    $(rpm -q libfprint-tod-elan0c63 2>/dev/null || echo "file: ${DRIVER_PATH}")"
-  echo "opencv:    $(rpm -qf --qf '%{NAME}-%{VERSION}\n' \
-                    "$(ldd "${DRIVER_PATH}" 2>/dev/null \
-                       | sed -n 's/.*=> \(.*libopencv_core[^ ]*\).*/\1/p' | head -1)" \
-                    2>/dev/null || echo unknown)"
+  echo "libfprint: $(pkg_version libfprint-2-tod1)"
+  echo "driver:    $(pkg_version libfprint-tod-elan0c63 || echo "file: ${DRIVER_PATH}")"
+  echo "opencv:    $(owning_package "$(ldd "${DRIVER_PATH}" 2>/dev/null \
+                       | sed -n 's/.*=> \(.*libopencv_core[^ ]*\).*/\1/p' | head -1)")"
   echo "device:    ${DEVICE_NAME:-unknown}"
   echo "usb:       $(lsusb 2>/dev/null | grep -i "${SENSOR_ID}" || echo unknown)"
   echo

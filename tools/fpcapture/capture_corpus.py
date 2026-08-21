@@ -4,7 +4,7 @@
 Captures native 80x80 raw frames from the ELAN 04f3:0c63 and stores them
 outside any repository. Nothing is cropped, assembled or normalised.
 
-Aufruf::
+Usage::
 
     sudo tools/.venv/bin/python tools/fpcapture/capture_corpus.py \\
         --subject alice --samples 15 \\
@@ -139,7 +139,7 @@ def confirm_consent(subject: str, corpus: Path) -> None:
             {
                 "subject": subject,
                 "granted_at": datetime.now(timezone.utc).isoformat(),
-                "scope": "Lokaler Sensortest ELAN 04f3:0c63",
+                "scope": "Local sensor test, ELAN 04f3:0c63",
                 "storage": str(corpus),
                 "revocable": True,
             },
@@ -277,7 +277,7 @@ def capture_session(args: argparse.Namespace) -> int:
     with Elan0c63() as sensor:
         print(f"  {sensor.info}")
         if sensor.info.width != 80 or sensor.info.height != 80:
-            print(f"  ACHTUNG: erwartet 80x80, gemeldet "
+            print(f"  WARNING: expected 80x80, device reports "
                   f"{sensor.info.width}x{sensor.info.height}.")
         print()
 
@@ -313,10 +313,10 @@ def capture_session(args: argparse.Namespace) -> int:
                 total[name] += count
 
             print()
-            print(f"  {finger}: {result['saved']} Aufnahmen "
-                  f"(gut {result['verdicts']['gut']}, "
-                  f"brauchbar {result['verdicts']['brauchbar']}, "
-                  f"schwach {result['verdicts']['schwach']})")
+            print(f"  {finger}: {result['saved']} captures "
+                  f"(good {result['verdicts']['good']}, "
+                  f"usable {result['verdicts']['usable']}, "
+                  f"weak {result['verdicts']['weak']})")
             print()
 
             if position < len(args.fingers):
@@ -324,8 +324,8 @@ def capture_session(args: argparse.Namespace) -> int:
                 print()
 
     print(f"  Session finished: {total['saved']} captures stored.")
-    print(f"  distribution: good {total['gut']}, usable {total['brauchbar']}, "
-          f"schwach {total['schwach']}")
+    print(f"  distribution: good {total['good']}, usable {total['usable']}, "
+          f"weak {total['weak']}")
     print()
     print("  All captures stay in the corpus, including the weak ones. Only the")
     print("  full range allows a quality threshold to be derived.")

@@ -222,8 +222,8 @@ run_cmd (FpiSsm *ssm, FpDevice *device, const ElanCmd *cmd, guint timeout_ms)
 
   g_autoptr(FpiUsbTransfer) transfer = fpi_usb_transfer_new (device);
 
-  /* Das Absenden der zwei Kommandobytes dauert immer gleich lang; nur die
-   * Antwort kann beliebig lange auf sich warten lassen. */
+  /* Sending the two command bytes always takes the same time; only the
+   * response may take arbitrarily long to arrive. */
   self->pending_timeout_ms = timeout_ms;
 
   transfer->ssm = ssm;
@@ -939,10 +939,10 @@ dev_cancel (FpDevice *device)
 
 /* ------------------------------------------------------------------ class */
 
-/* libfprint waehlt bei mehreren passenden Treibern den mit der hoechsten
- * Punktzahl (fp-context.c, usb_device_added_cb). Ohne usb_discover bekommt ein
- * Treiber 50; der eingebaute elan-Treiber beansprucht dieselbe USB-Kennung und
- * liegt damit bei 50.
+/* When several drivers match a device, libfprint picks the one with the
+ * highest score (fp-context.c, usb_device_added_cb). Without usb_discover a
+ * driver scores 50, and the in-tree elan driver claims the same USB id, so it
+ * sits at 50 too.
  *
  * We report a higher score, but only for this exact model. Every other ELAN
  * device is left alone, and no FP_DRIVERS_ALLOWLIST is needed - that would

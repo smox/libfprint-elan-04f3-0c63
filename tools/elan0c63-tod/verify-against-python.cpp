@@ -12,10 +12,10 @@
 
 int main (int argc, char **argv)
 {
-  if (argc < 2) { fprintf (stderr, "Aufruf: %s VERZEICHNIS\n", argv[0]); return 64; }
+  if (argc < 2) { fprintf (stderr, "usage: %s DIRECTORY\n", argv[0]); return 64; }
 
   GDir *dir = g_dir_open (argv[1], 0, nullptr);
-  if (!dir) { fprintf (stderr, "Verzeichnis nicht lesbar\n"); return 1; }
+  if (!dir) { fprintf (stderr, "directory is not readable\n"); return 1; }
 
   std::vector<std::string> names;
   const char *name;
