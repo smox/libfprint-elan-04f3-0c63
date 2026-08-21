@@ -35,9 +35,15 @@ mkdir -p "${HERE}/deb"
 # The source tree is copied into the container rather than bind-mounted for the
 # build itself: dpkg-buildpackage writes the .orig tarball and build artefacts
 # into the parent directory, and it should not litter the repository.
-# Cache the build dependencies in an image. Downloading roughly half a
-# gigabyte of build-essential, debhelper and libopencv-dev on every run
-# dominated the runtime; this pays for it once per target.
+# Cache the build dependencies in an image. libopencv-dev alone is well over a
+# gigabyte and dominated the runtime; this pays for it once per target instead
+# of on every run.
+#
+# libopencv-dev is the metapackage, even though the driver links five OpenCV
+# modules and no more. The five libopencv-*-dev packages would be a much
+# smaller download, but opencv4.pc ships in the metapackage, and meson.build
+# asks pkg-config for the include paths. Trading a correct pkg-config lookup
+# for hard-coded include paths is not worth the download.
 # Derived from the image name, sanitised: a podman repository name may not
 # contain uppercase, may not repeat separators and may not begin or end with
 # one, so "docker.io/library/ubuntu:24.04" cannot be used verbatim.

@@ -65,20 +65,52 @@ and [issue 272](https://gitlab.freedesktop.org/libfprint/libfprint/-/issues/272)
 
 ## Install
 
-Currently packaged for **openSUSE Tumbleweed** only, because that is what can
-actually be verified here. Build the package yourself:
+Packaged on the openSUSE Build Service for **openSUSE Tumbleweed** and
+**Ubuntu 24.04** (which is what TUXEDO OS 4 is based on). Both are built from
+the same sources in [`home:sm0x`](https://build.opensuse.org/package/show/home:sm0x/libfprint-tod-elan0c63).
+
+**openSUSE Tumbleweed**
 
 ```bash
-tools/elan0c63-tod/build.sh        # builds the module in a container
-tools/elan0c63-tod/build-rpm.sh    # builds an installable RPM
-sudo zypper --no-gpg-checks install tools/elan0c63-tod/rpm/x86_64/libfprint-tod-elan0c63-*.rpm
+sudo zypper addrepo https://download.opensuse.org/repositories/home:/sm0x/openSUSE_Tumbleweed/home:sm0x.repo
+sudo zypper refresh
+sudo zypper install libfprint-tod-elan0c63
 sudo systemctl stop fprintd.service
 ```
 
-Nothing is installed on the host during the build; it runs in a container. The
-package itself installs exactly one file into `/usr/lib64/libfprint-2/tod-1/`.
-It replaces no system library and changes no configuration. It does pull in the
-OpenCV runtime as a dependency.
+**Ubuntu 24.04, TUXEDO OS 4**
+
+```bash
+REPO=https://download.opensuse.org/repositories/home:/sm0x/xUbuntu_24.04
+curl -fsSL "$REPO/Release.key" | gpg --dearmor \
+  | sudo tee /etc/apt/trusted.gpg.d/home-sm0x.gpg > /dev/null
+echo "deb $REPO/ /" | sudo tee /etc/apt/sources.list.d/home-sm0x.list
+sudo apt update
+sudo apt install libfprint-tod-elan0c63
+sudo systemctl stop fprintd.service
+```
+
+The repository is signed, and apt does check it: with the key removed, `apt
+update` fails with `NO_PUBKEY F3547011F61D4E68`.
+
+The package installs exactly one file, into `/usr/lib64/libfprint-2/tod-1/` on
+openSUSE or `/usr/lib/x86_64-linux-gnu/libfprint-2/tod-1/` on Ubuntu. It
+replaces no system library and changes no configuration. It does pull in the
+OpenCV runtime as a dependency — five modules, not the whole stack.
+
+### Building it yourself instead
+
+```bash
+tools/elan0c63-tod/build.sh        # just the module, in a container
+tools/elan0c63-tod/build-rpm.sh    # an installable RPM
+tools/elan0c63-tod/build-deb.sh    # an installable .deb (Ubuntu 24.04)
+tools/elan0c63-tod/make-obs-sources.sh   # the source set OBS builds from
+```
+
+Nothing is installed on the host during any of these; they run in containers.
+Both `build.sh` and `build-deb.sh` finish by loading the module the way
+libfprint does and reading the driver class back, so a module that builds but
+cannot be instantiated fails there rather than on your machine.
 
 Check that it took over:
 
@@ -97,7 +129,8 @@ and picks the highest (`fp-context.c`, `usb_device_added_cb`); the default is
 ### Uninstall
 
 ```bash
-sudo zypper remove libfprint-tod-elan0c63
+sudo zypper remove libfprint-tod-elan0c63     # openSUSE
+sudo apt remove libfprint-tod-elan0c63        # Ubuntu
 sudo systemctl stop fprintd.service
 ```
 
@@ -106,20 +139,10 @@ nothing else to undo. Prints enrolled here live in
 `/var/lib/fprint/<user>/elan0c63/` and do not interfere with the stock driver,
 which uses its own directory.
 
-### Ubuntu, and TUXEDO OS 4
+### Notes on the Ubuntu build
 
-TUXEDO OS 4 is based on Ubuntu 24.04 LTS (noble), so the same build works there:
-
-```bash
-tools/elan0c63-tod/build-deb.sh                          # Ubuntu 24.04 (default)
-tools/elan0c63-tod/build-deb.sh docker.io/library/ubuntu:22.04
-sudo apt install ./tools/elan0c63-tod/deb/libfprint-tod-elan0c63_*.deb
-sudo systemctl stop fprintd.service
-```
-
-The build runs in a container; nothing lands on the host. `dpkg` derives the
-runtime dependencies from the ELF, so apt pulls in the right OpenCV and
-libfprint automatically.
+`dpkg` derives the runtime dependencies from the ELF, so apt pulls in the right
+OpenCV and libfprint without any of that being written by hand.
 
 Noble ships libfprint `1.94.7+tod1`; this driver was developed against
 `1.94.10+tod1`. Same line, and the two TOD symbol versions it uses
@@ -127,10 +150,13 @@ Noble ships libfprint `1.94.7+tod1`; this driver was developed against
 which the build script checks and prints. The binaries are *not*
 interchangeable with the openSUSE RPM: noble links OpenCV 4.6, Tumbleweed 4.13.
 
-**Not tested on Ubuntu hardware.** The package builds, installs into a clean
-root with all symbols resolved, and libfprint can instantiate the driver from
-it — that is what `build-deb.sh` verifies. Whether it then recognises your
-finger is what the test script is for.
+For a different Ubuntu release, `tools/elan0c63-tod/build-deb.sh
+docker.io/library/ubuntu:22.04` builds one locally.
+
+**Not tested on Ubuntu hardware.** The package builds, installs from the
+repository into a clean container with all symbols resolved, and libfprint can
+instantiate the driver from it. Whether it then recognises your finger is what
+the test script is for.
 
 ### Debian — not currently possible
 
