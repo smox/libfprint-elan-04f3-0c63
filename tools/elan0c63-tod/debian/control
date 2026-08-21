@@ -1,0 +1,41 @@
+Source: libfprint-tod-elan0c63
+Section: libs
+Priority: optional
+Maintainer: Michael Brunner <michael.brunner@sm0x.org>
+Build-Depends: debhelper-compat (= 13),
+               meson (>= 0.56),
+               ninja-build,
+               pkgconf | pkg-config,
+               libfprint-2-tod-dev,
+               libfprint-2-dev,
+               libgusb-dev,
+               libglib2.0-dev,
+               libopencv-dev,
+               binutils
+Standards-Version: 4.6.2
+Homepage: https://github.com/smox/libfprint-elan-04f3-0c63
+Rules-Requires-Root: no
+
+Package: libfprint-tod-elan0c63
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, fprintd
+Description: libfprint driver for ELAN 04f3:0c63 with descriptor matching
+ A libfprint driver for the ELAN 04f3:0c63 fingerprint sensor found in
+ several TUXEDO and Clevo laptops.
+ .
+ The in-tree elan driver treats this device as a swipe sensor and matches
+ with NBIS/Bozorth. That cannot work here: the sensor is 80x80 px at a
+ measured 498 dpi, so 16.6 mm², while NBIS needs about 37 mm² before it
+ finds the ten minutiae Bozorth requires. Across 123 measured captures not
+ one exceeded four.
+ .
+ This driver keeps the native press capture and matches local SIFT
+ descriptors with a RANSAC geometry check instead. It is loaded at runtime
+ as a TOD module and replaces no system file. It takes precedence over the
+ in-tree driver for this one USB id only; every other device keeps its
+ usual driver.
+ .
+ Measured on the developer's hardware: 9 of 10 genuine attempts recognised
+ with no false accept in 10 attempts with other fingers, against 1 of 5
+ with the in-tree driver. That sample is small - see the README for what
+ the numbers do and do not support.

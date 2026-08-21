@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# fprintd is D-Bus activated; stopping it is enough for the next access to pick
+# up the new driver.
+if [ "$1" = "configure" ]; then
+    if [ -d /run/systemd/system ]; then
+        systemctl stop fprintd.service >/dev/null 2>&1 || true
+    fi
+fi
+
+#DEBHELPER#

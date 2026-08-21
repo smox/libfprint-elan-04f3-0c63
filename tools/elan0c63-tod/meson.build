@@ -16,6 +16,14 @@ tod_dep = dependency('libfprint-2-tod-1')
 # TOD library, which only carries the 235 fpi_* symbols.
 fprint_dep = dependency('libfprint-2')
 
+# The driver calls g_usb_device_claim_interface() and friends directly. gusb is
+# only a Requires.private of libfprint-2-tod-1, so it supplies include paths but
+# not link flags. Without this the module links anyway on a toolchain that
+# tolerates undefined symbols, and resolves them at runtime through libfprint's
+# own gusb - which works by luck, not by contract. Debian's meson defaults pass
+# -Wl,--no-undefined and turn that luck into a build failure.
+gusb_dep = dependency('gusb')
+
 # Only the OpenCV modules actually used. Linking the opencv4 pkg-config module
 # as a whole drags in dnn, videoio and videostab, none of which this driver
 # touches.
@@ -38,7 +46,7 @@ driver = shared_library('fprint-tod-elan0c63',
     'elan0c63-tod.c',
     'elan0c63-match.cpp',
   ],
-  dependencies: [tod_dep, fprint_dep] + opencv_libs,
+  dependencies: [tod_dep, fprint_dep, gusb_dep] + opencv_libs,
   cpp_args: opencv_cflags,
   # A TOD module is dlopen()ed, never linked against, so no versioned soname.
   name_prefix: 'lib',

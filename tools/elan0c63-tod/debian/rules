@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=meson
+
+# The module is dlopen()ed by libfprint, never linked against. It carries no
+# soname on purpose, so the usual shared-library machinery does not apply.
+override_dh_makeshlibs:
+
+# There is no test suite; the meaningful check needs the installed artifact and
+# runs after dh_auto_install below.
+override_dh_auto_test:
+
+# With a single binary package debhelper would install straight into
+# debian/<package>. Pin it to debian/tmp so debian/install and the check below
+# have one predictable path regardless of debhelper's heuristic.
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/tmp
+	set -e; \
+	TOD_DIR=$$(pkgconf --variable=tod_driversdir libfprint-2-tod-1 2>/dev/null \
+	           || pkg-config --variable=tod_driversdir libfprint-2-tod-1); \
+	SO="debian/tmp$$TOD_DIR/libfprint-tod-elan0c63.so"; \
+	test -f "$$SO" || { echo "module not installed to $$TOD_DIR" >&2; exit 1; }; \
+	nm -D --defined-only "$$SO" | grep -q fpi_tod_shared_driver_get_type \
+	  || { echo "TOD entry point missing" >&2; exit 1; }; \
+	echo "checked: entry point present, installed to $$TOD_DIR"

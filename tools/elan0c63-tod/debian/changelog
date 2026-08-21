@@ -1,0 +1,7 @@
+libfprint-tod-elan0c63 (0.1.0-1) unstable; urgency=low
+
+  * Initial package. Descriptor-based matching for ELAN 04f3:0c63.
+  * Native press capture instead of the synthetic swipe assembly.
+  * Calibration retries instead of a hard failure when the sensor is not clear.
+
+ -- Michael Brunner <michael.brunner@sm0x.org>  Fri, 21 Aug 2026 12:00:00 +0200

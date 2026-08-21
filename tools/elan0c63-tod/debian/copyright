@@ -1,0 +1,29 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: libfprint-tod-elan0c63
+Upstream-Contact: Michael Brunner <michael.brunner@sm0x.org>
+Source: https://github.com/smox/libfprint-elan-04f3-0c63
+
+Files: *
+Copyright: 2026 Michael Brunner
+License: LGPL-2.1+
+
+Files: elan0c63-tod.c
+Copyright: 2017 Igor Filatov
+           2026 Michael Brunner
+License: LGPL-2.1+
+Comment: The USB command sequence is taken from libfprint's in-tree elan
+ driver by Igor Filatov. The capture handling and matching are new.
+
+License: LGPL-2.1+
+ This library is free software; you can redistribute it and/or modify it
+ under the terms of the GNU Lesser General Public License as published by
+ the Free Software Foundation; either version 2.1 of the License, or (at
+ your option) any later version.
+ .
+ This library is distributed in the hope that it will be useful, but
+ WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser
+ General Public License for more details.
+ .
+ On Debian systems the full text of the GNU Lesser General Public License
+ version 2.1 can be found in /usr/share/common-licenses/LGPL-2.1.

@@ -106,13 +106,48 @@ nothing else to undo. Prints enrolled here live in
 `/var/lib/fprint/<user>/elan0c63/` and do not interfere with the stock driver,
 which uses its own directory.
 
-### Other distributions
+### Ubuntu, and TUXEDO OS 4
 
-Only Tumbleweed is packaged and tested. The source is two files and about 900
-lines, so building elsewhere is not hard — you need libfprint with TOD support,
-fprintd, and OpenCV. Note that Debian and Ubuntu ship a different libfprint
-version line (`1.95.x+tod1`), which needs a rebuild rather than the same
-binary. Open an issue saying which distribution you want.
+TUXEDO OS 4 is based on Ubuntu 24.04 LTS (noble), so the same build works there:
+
+```bash
+tools/elan0c63-tod/build-deb.sh                          # Ubuntu 24.04 (default)
+tools/elan0c63-tod/build-deb.sh docker.io/library/ubuntu:22.04
+sudo apt install ./tools/elan0c63-tod/deb/libfprint-tod-elan0c63_*.deb
+sudo systemctl stop fprintd.service
+```
+
+The build runs in a container; nothing lands on the host. `dpkg` derives the
+runtime dependencies from the ELF, so apt pulls in the right OpenCV and
+libfprint automatically.
+
+Noble ships libfprint `1.94.7+tod1`; this driver was developed against
+`1.94.10+tod1`. Same line, and the two TOD symbol versions it uses
+(`LIBFPRINT_TOD_1.0.0` and `LIBFPRINT_TOD_1_1.92`) are both present in noble,
+which the build script checks and prints. The binaries are *not*
+interchangeable with the openSUSE RPM: noble links OpenCV 4.6, Tumbleweed 4.13.
+
+**Not tested on Ubuntu hardware.** The package builds, installs into a clean
+root with all symbols resolved, and libfprint can instantiate the driver from
+it — that is what `build-deb.sh` verifies. Whether it then recognises your
+finger is what the test script is for.
+
+### Debian — not currently possible
+
+Debian does not ship libfprint with TOD support at all. Measured on trixie:
+there is no `libfprint-2-tod1` and no `libfprint-2-tod-dev` package, and the
+`libfprint-2.so.2` in the archive exports only `LIBFPRINT_2.0.0` with no TOD
+library beside it. TOD is Canonical's patch set for OEM driver loading.
+
+So on Debian there is nothing to load a TOD module *into*. That matters for the
+announced Debian-testing-based TUXEDO OS: unless TUXEDO ships its own
+TOD-enabled libfprint, this driver would have to go into libfprint proper
+rather than be distributed as a module.
+
+### Anything else
+
+The source is two files and about 900 lines. You need libfprint with TOD
+support, fprintd, and OpenCV. Open an issue saying which distribution you want.
 
 ## Testing
 

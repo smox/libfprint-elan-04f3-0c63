@@ -22,6 +22,9 @@ BuildRequires:  pkgconfig(libfprint-2-tod-1)
 BuildRequires:  pkgconfig(libfprint-2)
 BuildRequires:  opencv-devel
 BuildRequires:  glib2-devel
+# The driver calls g_usb_device_* directly. gusb is only a Requires.private of
+# libfprint-2-tod-1, so it must be asked for explicitly.
+BuildRequires:  pkgconfig(gusb)
 
 Requires:       libfprint-2-tod1
 Requires:       fprintd
@@ -83,8 +86,11 @@ gcc %{optflags} -std=gnu11 -fPIC -c elan0c63-tod.c -o tod.o \
 
 # Only the OpenCV modules actually used; the opencv4 pkg-config module would
 # otherwise drag in dnn, videoio and videostab.
-g++ -shared -Wl,-z,relro,-z,now -o libfprint-tod-elan0c63.so tod.o match.o \
-    $(pkg-config --libs libfprint-2-tod-1 libfprint-2) \
+# --no-undefined turns a symbol that only resolves transitively at runtime into
+# a build failure here, where it is cheap to find.
+g++ -shared -Wl,-z,relro,-z,now -Wl,--no-undefined \
+    -o libfprint-tod-elan0c63.so tod.o match.o \
+    $(pkg-config --libs libfprint-2-tod-1 libfprint-2 gusb) \
     -lopencv_core -lopencv_imgproc -lopencv_features2d \
     -lopencv_calib3d -lopencv_flann
 

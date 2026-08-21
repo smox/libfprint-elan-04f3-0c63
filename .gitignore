@@ -27,6 +27,13 @@ rpm/
 build-rpms/
 build-rpms-openssl/
 *.rpm
+build-deb/
+deb/
+*.deb
+*.ddeb
+*.buildinfo
+*.changes
+*.dsc
 *.o
 *.so
 *.tar.bz2
